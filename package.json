@@ -1,0 +1,16 @@
+{
+  "name": "programming language 2",
+  "private": true,
+  "version": "0.0.1",
+  "description": "A third attempt at a programming language",
+  "main": "./src/utils/im-js/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "node ./build/build.ts devserver",
+    "build": "node ./build/build.ts build"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.3"
+  }
+}
