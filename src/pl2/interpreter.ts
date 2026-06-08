@@ -1,5 +1,4 @@
 import { Program } from "./ast";
-import { Parser } from "./parser";
 
 export const PROGRAM_OUTPUT_VARIABLE = 0;
 

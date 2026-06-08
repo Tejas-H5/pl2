@@ -29,22 +29,22 @@ export function newTestResult(t: TestContext, name: string): TestResult {
 	return result;
 }
 
-export function test(r: TestResult, outcome: boolean): boolean {
+export function test(r: TestResult, outcome: boolean, message = "no message"): boolean {
 	r.checks += 1;
-	if (!outcome) testFailure(r, "Test failed");
+	if (!outcome) testFailure(r, "Test failed - " + message);
 	return outcome;
 }
 
-export function testAssert(r: TestResult, outcome: boolean, message: string): asserts outcome {
+export function testAssert(r: TestResult, outcome: boolean, message: string = "..."): asserts outcome {
 	r.checks += 1;
 	if (!outcome) {
-		throw new Error("Assertion failed - " + message);
+		throw new Error("Test assertion failed - " + message);
 	}
 }
 
 export function testEqual(r: TestResult, a: unknown, b: unknown) {
 	if (!test(r, a === b)) {
-		testFailure(r, `    got: ${a}, wanted: ${b}`);
+		testFailure(r, `    got: ${JSON.stringify(a)}, wanted: ${JSON.stringify(b)}`);
 	}
 }
 
@@ -77,19 +77,19 @@ export function addTest(name: string, fn: ((r: TestResult) => void)) {
 
 export function addTestGroup(name: string, registerFn: () => void) {
 	groups.push(name);
-	currentGroup = groups.join(" -> ");
+	currentGroup = groups.join(" :: ");
 	try {
 		registerFn();
 	} finally {
 		groups.pop();
-		currentGroup = groups.join(" -> ");
+		currentGroup = groups.join(" :: ");
 	}
 }
 
 export function runAllTests(): TestContext {
 	const t = newTestingContext();
 	for (const fn of tests) {
-		const r = newTestResult(t, currentGroup + fn.name);
+		const r = newTestResult(t, fn.group + " :: " + fn.name);
 		try {
 			fn.fn(r);
 		} catch(e) {
