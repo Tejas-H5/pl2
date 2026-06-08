@@ -44,6 +44,7 @@ const Expression_BinaryExpression  = 2;
 const Expression_FunctionCall      = 3;
 const Expression_IfChain           = 4;
 const Expression_ForLoop           = 5;
+const Expression_TypeInitializer   = 6;
 
 export type ExpressionType =
  | typeof Expression_Invalid
@@ -51,6 +52,7 @@ export type ExpressionType =
  | typeof Expression_BinaryExpression
  | typeof Expression_FunctionCall
  | typeof Expression_ForLoop
+ | typeof Expression_TypeInitializer
  ;
 
 export type ExpressionBase = {
@@ -98,6 +100,13 @@ export type ForLoopRange = {
 	rangeType: ForLoopRangeType;
 };
 
+export type TypeInitializer = ExpressionBase & {
+	type: typeof Expression_TypeInitializer;
+	typename: Identifier;
+	typeArgs: Identifier[] | undefined; 
+	args: Expression[];
+}
+
 export const RANGE_LT  = 1;
 export const RANGE_LTE = 2;
 export const RANGE_GT  = 3;
@@ -110,6 +119,8 @@ export type ForLoopRangeType =
  | typeof RANGE_GTE
  ;
 
+export type DataType = {
+}
 
 export type Expression = 
  | BinaryExpression
@@ -117,6 +128,7 @@ export type Expression =
  | FunctionCall
  | IfChain
  | ForLoop
+ | TypeInitializer
  ;
 
 export function isAllowedIdentifierSymbol(char: string) {
@@ -154,9 +166,10 @@ export function parseWhitespace(parser: Parser) {
 export function parseIdentifier(parser: Parser): Identifier | undefined {
 	parseWhitespace(parser);
 
+	if (!isLetter(currentChar(parser))) return;
+
 	const start = parserPos(parser);
 
-    assert(isLetter(currentChar(parser)));
     while (isAllowedIdentifierSymbol(currentChar(parser))) {
 		advance(parser)
 	}
@@ -488,12 +501,10 @@ function parseSingularExpression(parser: Parser): Expression | undefined {
 
 	const pos = parserPos(parser);
 
-	// Parse a group. 
 	const group = parseGroup(parser);
 	if (group) return group;
 	reset(parser, pos);
 
-	// Parse if-block
 	const ifBlock = parseIfChain(parser);
 	if (ifBlock) return ifBlock;
 	reset(parser, pos);
@@ -502,18 +513,33 @@ function parseSingularExpression(parser: Parser): Expression | undefined {
 	if (forLoop) return forLoop;
 	reset(parser, pos);
 
-	// Identifier, or function. Do this _after_ keywords.
+	// Identifier, or function, or data initializer. Do this _after_ keywords.
 	if (isAllowedIdentifierSymbol(currentChar(parser))) {
 		const identifier = parseIdentifier(parser);
 		assert(!!identifier);
 
 		// No whitespace parsing here. fn(x) to work, fn (x) to not work.
 
+		let typeArgs: Identifier[] | undefined;
+		if (currentChar(parser) === "<") {
+			typeArgs = parseTypeArgs(parser);
+		}
+
+		// TODO: template functions?
 		if (currentChar(parser) === "(") {
 			const functionCall = parseFunctionCall(parser, identifier);
 			if (functionCall) {
 				return functionCall;
 			}
+
+			return undefined;
+		} else if (currentChar(parser) === "{") {
+			const dataInitializer = parseTypeInitializer(parser, identifier, typeArgs);
+			if (dataInitializer) {
+				return dataInitializer;
+			}
+
+			return undefined;
 		}
 
 		return identifier;
@@ -685,9 +711,12 @@ addTestGroup("Binary expressions", () => {
 });
 
 function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCall | undefined {
-	const args: Expression[] = [];
+	if (currentChar(parser) !== "(") return;
 
 	advance(parser);
+
+	const args: Expression[] = [];
+
 	while(true) {
 		const expr = parseExpression(parser);
 		if (expr) {
@@ -717,18 +746,19 @@ function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCa
 	};
 }
 
+
 addTestGroup("Function call arguments", () => {
 	addTest("no args", r => {
 		const expr = parseExpressionFromText("a()");
 		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall, "expr.type === EXPR_FN_CALL");
+		testAssert(r, expr.type === Expression_FunctionCall);
 		testEqual(r, expr.name.name, "a");
 	})
 
 	addTest("one arg", r => {
 		const expr = parseExpressionFromText("a(y)");
 		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall, "expr.type === EXPR_FN_CALL");
+		testAssert(r, expr.type === Expression_FunctionCall);
 		testEqual(r, expr.name.name, "a");
 		testEqual(r, expr.arguments.length, 1);
 		testEqual(r, expr.arguments[0].type, Expression_Identifier);
@@ -738,7 +768,7 @@ addTestGroup("Function call arguments", () => {
 	addTest("two args", r => {
 		const expr = parseExpressionFromText("a(x, y)");
 		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall, "expr.type === EXPR_FN_CALL");
+		testAssert(r, expr.type === Expression_FunctionCall);
 		testEqual(r, expr.name.name, "a");
 		testEqual(r, expr.arguments.length, 2);
 		testEqual(r, expr.arguments[0].type, Expression_Identifier);
@@ -750,7 +780,7 @@ addTestGroup("Function call arguments", () => {
 	addTest("nested calls", r => {
 		const expr = parseExpressionFromText("a(b(c()))");
 		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall, "expr.type === EXPR_FN_CALL");
+		testAssert(r, expr.type === Expression_FunctionCall);
 
 		testEqual(r, expr.name.name, "a");
 		testEqual(r, expr.arguments.length, 1);
@@ -765,6 +795,101 @@ addTestGroup("Function call arguments", () => {
 		testEqual(r, cFn.arguments.length, 0);
 	})
 });
+
+function parseTypeInitializer(parser: Parser, identifier: Identifier, typeArgs: Identifier[] | undefined): TypeInitializer | undefined {
+	if (currentChar(parser) !== "{") return;
+
+	const pos = parserPos(parser);
+	
+	advance(parser);
+
+	const args: Expression[] = [];
+
+	while(true) {
+		const expr = parseExpression(parser);
+		if (expr) {
+			args.push(expr);
+			parseWhitespace(parser);
+			if (currentChar(parser) === ",") {
+				advance(parser);
+			}
+			continue;
+		} 
+
+		parseWhitespace(parser);
+		if (currentChar(parser) !== "}") {
+			// TODO: report this error
+			return undefined;
+		}
+
+		advance(parser);
+		break;
+	}
+
+	return {
+		pos,
+		type: Expression_TypeInitializer,
+		typename: identifier,
+		args: args,
+		typeArgs: typeArgs,
+	};
+}
+
+addTestGroup("Type initializers", () => {
+	addTest("List", r => {
+		const expr = parseExpressionFromText("list<f32>{a, a, a, a}");
+		testAssert(r, !!expr, "!!expr");
+		testAssert(r, expr.type === Expression_TypeInitializer);
+		testAssert(r, !!expr.typeArgs);
+		test(r, isIdentifier(expr.typeArgs[0], "f32"));
+		testEqual(r, expr.typename.name, "list");
+		testEqual(r, expr.args.length, 4);
+	})
+
+	addTest("Map", r => {
+		const expr = parseExpressionFromText("map<string, f32>{a=b,c=d,e=f}");
+		testAssert(r, !!expr, "0");
+		testAssert(r, expr.type === Expression_TypeInitializer, "1");
+
+		testAssert(r, !!expr.typeArgs);
+		testEqual(r, expr.typeArgs.length, 2);
+		testEqual(r, expr.typeArgs[0].name, "string");
+		testEqual(r, expr.typeArgs[1].name, "f32");
+
+		testEqual(r, expr.typename.name, "map");
+		testEqual(r, expr.args.length, 3);
+	})
+});
+
+function parseTypeArgs(parser: Parser): Identifier[] | undefined {
+	if (currentChar(parser) !== "<") return;
+	advance(parser);
+
+	const args: Identifier[] = [];
+
+	while(true) {
+		const ident = parseIdentifier(parser);
+		if (ident) {
+			args.push(ident);
+			parseWhitespace(parser);
+			if (currentChar(parser) === ",") {
+				advance(parser);
+			}
+			continue;
+		} 
+
+		parseWhitespace(parser);
+		if (currentChar(parser) !== ">") {
+			// TODO: report this error
+			return undefined;
+		}
+
+		advance(parser);
+		break;
+	}
+
+	return args;
+}
 
 export function parseProgram(parser: Parser): Program {
 	const program: Program = {
