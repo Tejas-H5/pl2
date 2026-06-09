@@ -40,7 +40,9 @@ export function compareCurrent(r: Parser, str: string): boolean {
     return true;
 }
 
-export function advance(r: Parser) {
+// TODO: WE NEED TO HANDLE THE RETURN VALUE !!!
+// The parser can randomly run out of text to parse at any point. xD. We need odin's @require_results in typescript.
+export function advance(r: Parser): boolean {
 	return advanceTextPosition(r.pos, r.text);
 }
 

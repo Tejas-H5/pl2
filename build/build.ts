@@ -41,7 +41,7 @@ const WORKING_SOURCEMAPS_OR_FASTER_RELOAD = "working-sourcemaps"
 // const WORKING_SOURCEMAPS_OR_FASTER_RELOAD = "faster-reload"
 
 // It isn't faster for some reason??
-const USE_TSGO = true;
+const USE_TSGO = false;
 
 const templateString = await fs.readFile(TEMPLATE_PATH, "utf8");
 
@@ -74,6 +74,10 @@ function logServerUrl() {
 const commonBuildOptions: esbuild.BuildOptions = {
 	entryPoints: [ENTRYPOINT],
 	bundle: true,
+	minify: true,
+	// minifyWhitespace: false,
+	// minifyIdentifiers: false,
+	// minifySyntax: true,
 	treeShaking: true,
 	define: Object.fromEntries(
 		Object

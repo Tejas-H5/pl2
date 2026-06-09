@@ -25,26 +25,26 @@ export function assignTextPosition(dst: TextPosition, src: TextPosition) {
 	dst.tabs = src.tabs;
 }
 
-// Returns true if we've reached the end of the text.
+// Returns true if we've still got more to go
 export function advanceTextPosition(pos: TextPosition, text: string) {
-    const c = text[pos.i];
-	if (!c) {
-		return true;
-	}
+    if (pos.i >= text.length) {
+	return false;
+    }
 
+    const c = text[pos.i];
     if (c === "\n") {
-        pos.line++;
-        pos.col = 0;
-        pos.tabs = 0;
+	pos.line++;
+	pos.col = 0;
+	pos.tabs = 0;
     } else if (c === "\t") {
-        pos.tabs++;
+	pos.tabs++;
     } else {
-        pos.col++;
+	pos.col++;
     }
 
     pos.i++;
 
-    return pos.i >= text.length;
+    return true
 }
 
 

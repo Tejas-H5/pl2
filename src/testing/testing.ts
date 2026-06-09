@@ -71,11 +71,21 @@ const tests: TestFn[] = [];
 const groups: string[] = [];
 let currentGroup = "";
 
-export function addTest(name: string, fn: ((r: TestResult) => void)) {
+export function addTest(
+	name: string,
+	fn: ((r: TestResult) => void)
+) {
 	tests.push({name, fn, group: currentGroup});
 }
 
-export function addTestGroup(name: string, registerFn: () => void) {
+// _coveredSymbols allows us to quickly navigate to what we're trying to cover with a particular test.
+// Rather than typing the name via a string, inserting the symbol allows the LSP to automatically keep names in sync,
+// and notify us when those things get removed from the codebase.
+export function addTestGroup(
+	name: string,
+	_tryingToCover: unknown[],
+	registerFn: () => void
+) {
 	groups.push(name);
 	currentGroup = groups.join(" :: ");
 	try {

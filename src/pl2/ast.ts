@@ -1,19 +1,19 @@
 import { addTest, addTestGroup, test, testAssert, testDeepEqual, testEqual } from "src/testing/testing";
 import { assert } from "./assert";
 import {
-	advance,
-	advanceBy,
-	advanceToNextNewLine,
-	compareCurrent,
-	currentChar,
-	newParser,
-	Parser,
-	parserPos,
-	reachedEnd,
+    advance,
+    advanceBy,
+    advanceToNextNewLine,
+    compareCurrent,
+    currentChar,
+    newParser,
+    Parser,
+    parserPos,
+    reachedEnd,
     reset,
 } from "./parser";
 import { isDigit, isLetter, isWhitespace } from "./string-utils";
-import { newTextPosition, TextPosition } from "./text-pos";
+import { TextPosition } from "./text-pos";
 
 export type Program = {
 	statements: Expression[];
@@ -45,6 +45,8 @@ const Expression_FunctionCall      = 3;
 const Expression_IfChain           = 4;
 const Expression_ForLoop           = 5;
 const Expression_TypeInitializer   = 6;
+const Expression_NumberLiteral     = 7;
+const Expression_StringLiteral     = 8;
 
 export type ExpressionType =
  | typeof Expression_Invalid
@@ -53,11 +55,13 @@ export type ExpressionType =
  | typeof Expression_FunctionCall
  | typeof Expression_ForLoop
  | typeof Expression_TypeInitializer
+ | typeof Expression_NumberLiteral
  ;
 
 export type ExpressionBase = {
 	type: number;
-	pos:  TextPosition;
+	start: TextPosition;
+	end:   TextPosition;
 }
 
 type BinaryExpression = ExpressionBase & {
@@ -84,7 +88,7 @@ export type IfChain = ExpressionBase & {
 		check: Expression;
 		block: Expression[];
 	}[];
-	else: Expression[];
+	else: Expression[] | undefined;
 };
 
 export type ForLoop = ExpressionBase & {
@@ -105,6 +109,21 @@ export type TypeInitializer = ExpressionBase & {
 	typename: Identifier;
 	typeArgs: Identifier[] | undefined; 
 	args: Expression[];
+}
+
+
+export type NumberLiteral = ExpressionBase & {
+    type: typeof Expression_NumberLiteral;
+    integerPart: string;
+    decimalPart: string | undefined;
+    exponentPart: string | undefined;
+    isNegative: boolean;
+    val: number;
+}
+
+export type StringLiteral = ExpressionBase & {
+    type: typeof Expression_StringLiteral;
+    val: string;
 }
 
 export const RANGE_LT  = 1;
@@ -129,15 +148,21 @@ export type Expression =
  | IfChain
  | ForLoop
  | TypeInitializer
+ | NumberLiteral
+ | StringLiteral
  ;
+
+export function expressionToString(text: string, expr: Expression): string {
+    return text.slice(expr.start.i, expr.end.i)
+}
 
 export function isAllowedIdentifierSymbol(char: string) {
     return isLetter(char) || isDigit(char) || char === "_";
 }
 
-export function canParseNumberLiteral(r: Parser) {
+export function canParseNumberLiteral(r: Parser): boolean {
     const c = currentChar(r);
-    return c === "+" || isDigit(c);
+    return c === "+" || c === "-" || isDigit(c);
 }
 
 export function isValidNumberPart(c: string) {
@@ -170,9 +195,7 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
 
 	const start = parserPos(parser);
 
-    while (isAllowedIdentifierSymbol(currentChar(parser))) {
-		advance(parser)
-	}
+    while (isAllowedIdentifierSymbol(currentChar(parser)) && advance(parser)) {}
 
 	if (start.i === parser.pos.i) {
 		return undefined;
@@ -182,7 +205,8 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
 
     return {
 		type: Expression_Identifier,
-		pos: start,
+		start: start,
+		end:   parserPos(parser),
         name,
     };
 }
@@ -210,7 +234,7 @@ export function parseOperator(parser: Parser): BinaryOperator | undefined {
 	let assignment = false;
 	if (currentChar(parser) === "=") {
 		assignment = true;
-		advance(parser);
+		if (!advance(parser)) return;
 	}
 
 	if (op === 0 && !assignment) return undefined;
@@ -221,7 +245,7 @@ export function parseOperator(parser: Parser): BinaryOperator | undefined {
 	};
 }
 
-addTestGroup("Assignment, Operators", () => {
+addTestGroup("Operator parsing", [parseOperator], () => {
 	addTest("Normal", r => {
 		const expr = parseExpressionFromText(`x = y`);
 		testAssert(r, !!expr, "!!expr");
@@ -265,7 +289,8 @@ addTestGroup("Assignment, Operators", () => {
 function parseGroup(parser: Parser): Expression | undefined {
 	if (currentChar(parser) !== "(") return;
 
-	advance(parser);
+	if (!advance(parser)) return;
+
 	const expr = parseExpression(parser);
 	if (!expr) {
 		// TODO: report error
@@ -277,6 +302,7 @@ function parseGroup(parser: Parser): Expression | undefined {
 		// TODO: report error - expected closing brace here. i
 		// return what we have anyway
 	}
+
 	advance(parser);
 
 	return expr;
@@ -335,12 +361,10 @@ function parseIfChain(parser: Parser): IfChain | undefined {
 	if (!checkForKeyword(parser, "if ")) return;
 
 	parseWhitespace(parser);
-	const result: IfChain = {
-		pos: parserPos(parser),
-		type: Expression_IfChain,
-		blocks: [],
-		else: [],
-	};
+
+	const start = parserPos(parser);
+	const blocks: { check: Expression; block: Expression[]; }[] = [];
+	let elseItems: Expression[] | undefined;
 
 	while (true) {
 		const check = parseExpression(parser);
@@ -356,7 +380,7 @@ function parseIfChain(parser: Parser): IfChain | undefined {
 			// TODO: Wrap the error?
 			return undefined;
 		}
-		result.blocks.push({ check, block });
+		blocks.push({ check, block });
 
 		parseWhitespace(parser);
 		if (!checkForKeyword(parser, "else ")) {
@@ -374,21 +398,27 @@ function parseIfChain(parser: Parser): IfChain | undefined {
 				break;
 			}
 
-			result.else = elseBlock;
+			elseItems = elseBlock;
 
 			break;
 		}
 	}
 
-	return result;
+	return {
+		type: Expression_IfChain,
+		start: start,
+		end:   parserPos(parser),
+		blocks,
+		else: elseItems,
+	};
 }
 
-addTestGroup("If-chains", () => {
+addTestGroup("If-chains", [parseIfChain], () => {
 	addTest("Single if", r => {
 		const expr = parseExpressionFromText(`if a { b c d }`)
 		testAssert(r, !!expr);
 		testAssert(r, expr.type === Expression_IfChain);
-		testEqual(r, expr.else.length, 0);
+		testEqual(r, expr.else, undefined);
 		testEqual(r, expr.blocks.length, 1);
 		testEqual(r, expr.blocks[0].block.length, 3);
 	})
@@ -397,7 +427,7 @@ addTestGroup("If-chains", () => {
 		const expr = parseExpressionFromText(`if a { b c d } else { f g }`)
 		testAssert(r, !!expr, "0");
 		testAssert(r, expr.type === Expression_IfChain, "1");
-		testEqual(r, expr.else.length, 2);
+		testEqual(r, expr.else!.length, 2);
 		testEqual(r, expr.blocks.length, 1);
 		testEqual(r, expr.blocks[0].block.length, 3);
 	})
@@ -406,7 +436,7 @@ addTestGroup("If-chains", () => {
 		const expr = parseExpressionFromText(`if a { b c d } else if b { f g } else { h }`)
 		testAssert(r, !!expr, "0");
 		testAssert(r, expr.type === Expression_IfChain, "1");
-		testEqual(r, expr.else.length, 1);
+		testEqual(r, expr.else!.length, 1);
 		testEqual(r, expr.blocks.length, 2);
 		testEqual(r, expr.blocks[0].block.length, 3);
 		testEqual(r, expr.blocks[1].block.length, 2);
@@ -470,7 +500,8 @@ function parseForLoop(parser: Parser): ForLoop | undefined {
 
 	return {
 		type: Expression_ForLoop,
-		pos: pos,
+		start: pos,
+		end:   parserPos(parser),
 		range: {
 			varName:   varName,
 			initial:   initial,
@@ -481,7 +512,7 @@ function parseForLoop(parser: Parser): ForLoop | undefined {
 	};
 }
 
-addTestGroup("For loops", () => {
+addTestGroup("For loops", [parseForLoop], () => {
 	addTest("lte", r => {
 		const expr = parseExpressionFromText("for i in a..<b {}");
 		testAssert(r, !!expr, "0")
@@ -513,8 +544,24 @@ function parseSingularExpression(parser: Parser): Expression | undefined {
 	if (forLoop) return forLoop;
 	reset(parser, pos);
 
+	if (canParseNumberLiteral(parser)) {
+		const number = parseNumberLiteral(parser);
+		if (number) return number;
+
+		// TODO: error here
+		return undefined;
+	}
+
+	if (currentChar(parser) === "\"") {
+		const str = parseStringLiteral(parser);
+		if (str) return str;
+
+		// TODO: error here
+		return undefined;
+	}
+
 	// Identifier, or function, or data initializer. Do this _after_ keywords.
-	if (isAllowedIdentifierSymbol(currentChar(parser))) {
+	if (isLetter(currentChar(parser))) {
 		const identifier = parseIdentifier(parser);
 		assert(!!identifier);
 
@@ -577,7 +624,8 @@ function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, o
 
 			expr = {
 				type: Expression_BinaryExpression,
-				pos: lhs.pos,
+				start: lhs.start,
+				end: rhs.end,
 				lhs: lhs,
 				op: op,
 				rhs: rhs,
@@ -609,7 +657,8 @@ function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, o
 		// (lhs recursive thing) <op> rhs
 		expr = {
 			type: Expression_BinaryExpression,
-			pos: expr.pos,
+			start: expr.start,
+			end: rhs.end,
 			lhs: expr,
 			op: op,
 			rhs: rhs,
@@ -659,7 +708,7 @@ function isIdentifier(expr: Expression | undefined, name: string): expr is Ident
 	return expr.name === name;
 }
 
-addTestGroup("Binary expressions", () => {
+addTestGroup("Binary expressions", [parseExpression, parseBinaryExpression], () => {
 	addTest("add", r => {
 		const expr = parseExpressionFromText("a + b");
 		testAssert(r, !!expr, "!!expr");
@@ -713,7 +762,7 @@ addTestGroup("Binary expressions", () => {
 function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCall | undefined {
 	if (currentChar(parser) !== "(") return;
 
-	advance(parser);
+	if (!advance(parser)) return;
 
 	const args: Expression[] = [];
 
@@ -723,7 +772,7 @@ function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCa
 			args.push(expr);
 			parseWhitespace(parser);
 			if (currentChar(parser) === ",") {
-				advance(parser);
+				if (!advance(parser)) return;
 			}
 			continue;
 		} 
@@ -740,14 +789,14 @@ function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCa
 
 	return {
 		type: Expression_FunctionCall,
-		pos:  functionName.pos,
+		start: functionName.start,
+		end:   parserPos(parser),
 		name: functionName,
 		arguments: args,
 	};
 }
 
-
-addTestGroup("Function call arguments", () => {
+addTestGroup("Function call arguments", [parseFunctionCall], () => {
 	addTest("no args", r => {
 		const expr = parseExpressionFromText("a()");
 		testAssert(r, !!expr, "!!expr");
@@ -796,7 +845,11 @@ addTestGroup("Function call arguments", () => {
 	})
 });
 
-function parseTypeInitializer(parser: Parser, identifier: Identifier, typeArgs: Identifier[] | undefined): TypeInitializer | undefined {
+function parseTypeInitializer(
+	parser: Parser,
+	identifier: Identifier,
+	typeArgs: Identifier[] | undefined
+): TypeInitializer | undefined {
 	if (currentChar(parser) !== "{") return;
 
 	const pos = parserPos(parser);
@@ -827,39 +880,14 @@ function parseTypeInitializer(parser: Parser, identifier: Identifier, typeArgs: 
 	}
 
 	return {
-		pos,
 		type: Expression_TypeInitializer,
+		start: pos,
+		end:   parserPos(parser),
 		typename: identifier,
 		args: args,
 		typeArgs: typeArgs,
 	};
 }
-
-addTestGroup("Type initializers", () => {
-	addTest("List", r => {
-		const expr = parseExpressionFromText("list<f32>{a, a, a, a}");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_TypeInitializer);
-		testAssert(r, !!expr.typeArgs);
-		test(r, isIdentifier(expr.typeArgs[0], "f32"));
-		testEqual(r, expr.typename.name, "list");
-		testEqual(r, expr.args.length, 4);
-	})
-
-	addTest("Map", r => {
-		const expr = parseExpressionFromText("map<string, f32>{a=b,c=d,e=f}");
-		testAssert(r, !!expr, "0");
-		testAssert(r, expr.type === Expression_TypeInitializer, "1");
-
-		testAssert(r, !!expr.typeArgs);
-		testEqual(r, expr.typeArgs.length, 2);
-		testEqual(r, expr.typeArgs[0].name, "string");
-		testEqual(r, expr.typeArgs[1].name, "f32");
-
-		testEqual(r, expr.typename.name, "map");
-		testEqual(r, expr.args.length, 3);
-	})
-});
 
 function parseTypeArgs(parser: Parser): Identifier[] | undefined {
 	if (currentChar(parser) !== "<") return;
@@ -891,6 +919,389 @@ function parseTypeArgs(parser: Parser): Identifier[] | undefined {
 	return args;
 }
 
+addTestGroup("Type initializers", [parseTypeArgs, parseTypeInitializer], () => {
+	addTest("List", r => {
+		const expr = parseExpressionFromText("list<f32>{a, a, a, a}");
+		testAssert(r, !!expr, "!!expr");
+		testAssert(r, expr.type === Expression_TypeInitializer);
+		testAssert(r, !!expr.typeArgs);
+		test(r, isIdentifier(expr.typeArgs[0], "f32"));
+		testEqual(r, expr.typename.name, "list");
+		testEqual(r, expr.args.length, 4);
+	})
+
+	addTest("Map", r => {
+		const expr = parseExpressionFromText("map<string, f32>{a=b,c=d,e=f}");
+		testAssert(r, !!expr, "0");
+		testAssert(r, expr.type === Expression_TypeInitializer, "1");
+
+		testAssert(r, !!expr.typeArgs);
+		testEqual(r, expr.typeArgs.length, 2);
+		testEqual(r, expr.typeArgs[0].name, "string");
+		testEqual(r, expr.typeArgs[1].name, "f32");
+
+		testEqual(r, expr.typename.name, "map");
+		testEqual(r, expr.args.length, 3);
+	})
+});
+
+function parseNumberLiteral(parser: Parser): NumberLiteral | undefined {
+    const pos = parserPos(parser);
+
+    let isNegative = false;
+    if (currentChar(parser) === "+") {
+        advance(parser);
+    } else if (currentChar(parser) === "-") {
+        isNegative = true;
+        advance(parser);
+    }
+
+    const intStart = parser.pos.i;
+    while (isValidNumberPart(currentChar(parser)) && advance(parser)) {}
+
+    const integerPart = parser.text.slice(intStart, parser.pos.i);
+
+    const result: NumberLiteral = {
+        type: Expression_NumberLiteral,
+		start: pos,
+		end:   parserPos(parser),
+        integerPart,
+        decimalPart: undefined,
+        exponentPart: undefined,
+        isNegative,
+        val: 0,
+    };
+
+    if (
+        currentChar(parser) === "."
+        // Here specifically because we need to make sure numbers don't collide with ..< and ..<= operators
+        && currentChar(parser, 1) !== "."
+        && advance(parser)
+    ) {
+        const decimalPartStart = parser.pos.i;
+        while (isValidNumberPart(currentChar(parser)) && advance(parser)) { }
+        result.decimalPart = parser.text.slice(decimalPartStart, parser.pos.i);
+        result.end = parserPos(parser);
+    }
+
+	if (result.integerPart === "" && result.decimalPart === undefined) {
+		return undefined;
+	}
+
+    if (currentChar(parser) === "e" && advance(parser)) {
+        const c = currentChar(parser);
+
+		let exponentPartStart = parser.pos.i;
+        if (c === "+" || c === "-") {
+			if (c === "-") {
+				exponentPartStart = parser.pos.i;
+			} else {
+				exponentPartStart = parser.pos.i + 1;
+			}
+
+            if (!advance(parser)) {
+                return result;
+            }
+        }
+
+        while (isValidNumberPart(currentChar(parser)) && advance(parser)) { }
+        result.exponentPart = parser.text.slice(exponentPartStart, parser.pos.i);
+        result.end = parserPos(parser);
+    }
+
+    result.val = computeNumberForNumberExpression(result);
+
+    return result;
+}
+
+addTestGroup("Number parsing", [parseNumberLiteral, computeNumberForNumberExpression], () => {
+	addTest("Zero", r => {
+		const expr = parseExpressionFromText("0.00");
+		testAssert(r, expr?.type === Expression_NumberLiteral);
+		testEqual(r, expr.isNegative, false);
+		testEqual(r, expr.val, 0);
+		testEqual(r, expr.integerPart, "0");
+		testEqual(r, expr.decimalPart, "00");
+		testEqual(r, expr.exponentPart, undefined)
+	});
+
+	addTest("One_e_2", r => {
+		const expr = parseExpressionFromText("1.00e2");
+		testAssert(r, expr?.type === Expression_NumberLiteral);
+		testEqual(r, expr.isNegative, false);
+		testEqual(r, expr.val, 100);
+		testEqual(r, expr.integerPart, "1");
+		testEqual(r, expr.decimalPart, "00");
+		testEqual(r, expr.exponentPart, "2");
+	});
+
+	addTest("+One_e_2", r => {
+		const expr = parseExpressionFromText("+1.00e2");
+		testAssert(r, expr?.type === Expression_NumberLiteral);
+		testEqual(r, expr.isNegative, false);
+		testEqual(r, expr.val, 100);
+		testEqual(r, expr.integerPart, "1");
+		testEqual(r, expr.decimalPart, "00");
+		testEqual(r, expr.exponentPart, "2");
+	});
+
+	addTest("-One_e_2", r => {
+		const expr = parseExpressionFromText("-1.00e2");
+		testAssert(r, expr?.type === Expression_NumberLiteral);
+		testEqual(r, expr.isNegative, true);
+		testEqual(r, expr.val, -100);
+		testEqual(r, expr.integerPart, "1");
+		testEqual(r, expr.decimalPart, "00");
+		testEqual(r, expr.exponentPart, "2");
+	});
+
+	addTest("-One-e_+2", r => {
+		const expr = parseExpressionFromText("-1.00e+2");
+		testAssert(r, expr?.type === Expression_NumberLiteral);
+		testEqual(r, expr.isNegative, true);
+		testEqual(r, expr.val, -100);
+		testEqual(r, expr.integerPart, "1");
+		testEqual(r, expr.decimalPart, "00");
+		testEqual(r, expr.exponentPart, "2");
+	});
+
+	addTest("-One-e_-2", r => {
+		const expr = parseExpressionFromText("-1.00e-2");
+		testAssert(r, expr?.type === Expression_NumberLiteral);
+		testEqual(r, expr.isNegative, true);
+		testEqual(r, expr.val, -0.01);
+		testEqual(r, expr.integerPart, "1");
+		testEqual(r, expr.decimalPart, "00");
+		testEqual(r, expr.exponentPart, "-2");
+	});
+
+	addTest("0 - -1", r => {
+		const expr = parseExpressionFromText("0 - -1");
+		testAssert(r, expr?.type === Expression_BinaryExpression);
+
+		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.lhs.val, 0);
+
+		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.rhs.val, -1);
+	});
+
+	addTest("0 - +1", r => {
+		const expr = parseExpressionFromText("0 - +1");
+		testAssert(r, expr?.type === Expression_BinaryExpression);
+
+		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.lhs.val, 0);
+
+		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.rhs.val, 1);
+	});
+
+	addTest("-1 - +0", r => {
+		const expr = parseExpressionFromText("-1 - +0");
+		testAssert(r, expr?.type === Expression_BinaryExpression);
+
+		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.lhs.val, -1);
+
+		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.rhs.val, 0);
+	});
+
+	addTest("+1 - +0", r => {
+		const expr = parseExpressionFromText("+1 - +0");
+		testAssert(r, expr?.type === Expression_BinaryExpression);
+
+		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.lhs.val, 1);
+
+		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
+		testEqual(r, expr.rhs.val, 0);
+	});
+
+	addTest("+ -1", r => {
+		const expr = parseExpressionFromText("+ -1");
+		testEqual(r, expr, undefined);
+	});
+
+	addTest("- -1", r => {
+		const expr = parseExpressionFromText("- -1");
+		testEqual(r, expr, undefined);
+	});
+});
+
+function computeNumberForNumberExpression(expr: NumberLiteral): number {
+    let result = 0;
+
+    if (expr.decimalPart) {
+        const text = expr.decimalPart.replace(/_/g, "");
+        const decimalVal = parseInt(text) / Math.pow(10, text.length)
+        result += decimalVal;
+    }
+
+    if (expr.integerPart) {
+        const text = expr.integerPart.replace(/_/g, "");
+        const intVal = parseInt(text);
+        result += intVal;
+    }
+
+    if (expr.exponentPart) {
+        const text = expr.exponentPart.replace(/_/g, "");
+        const expVal = parseInt(text);
+        result *= Math.pow(10, expVal);
+    }
+
+    if (expr.isNegative) {
+        result = -result;
+    }
+
+    // TODO: return undefined if the literal is impossible to generate properly
+
+    return result;
+}
+
+// TODO: This is a very basic string literal that could be vastly improved. current problems include:
+// - opening a " connects directly to the start of another string. JavaScript ` has this problem as well, lmao.
+// - I want the indentation in a string to be relative to the current indentation of the code, not to the
+//      start of the line. Something like the Java """ strings would be good here
+// - need some form of interpolation, since that is always nice to have.
+function parseStringLiteral(parser: Parser): StringLiteral | undefined {
+	if (currentChar(parser) !== "\"") return;
+
+    const startPos = parserPos(parser);
+
+    let closed = false;
+    while (!reachedEnd(parser)) {
+        advance(parser);
+
+        const c = currentChar(parser);
+        if (c === "\\") {
+            advance(parser);
+        } else if (c === "\"") {
+            closed = true;
+            advance(parser);
+            break;
+        }
+    }
+
+    // There's a good chance we'll go off the edge of the document when 
+    // we've opened up a string literal. It's best we just reset to the end of the
+    // line we started on, so we can still parse the rest of the stuff correctly (hopefully);
+
+    if (!closed) {
+        parser.pos = startPos;
+        advanceToNextNewLine(parser);
+        return;
+    }
+
+    const result: StringLiteral = {
+		type: Expression_StringLiteral,
+        start: startPos,
+        end: parserPos(parser),
+        val: "",
+    };
+
+    const [val, error] = computeStringForStringLiteral(
+        expressionToString(parser.text, result)
+    );
+    if (val === undefined) {
+        // TODO: addErrorAtCurrentPosition(parser, error);
+        return;
+    }
+
+    result.val = val;
+    return result;
+}
+
+function computeStringForStringLiteral(fullText: string): [string | undefined, string] {
+    const text = fullText.slice(1, fullText.length - 1);
+    const sb = [];
+
+    let isEscape = false;
+    let errorMessage = "";
+    for (const c of text) {
+        if (!isEscape) {
+            if (c === "\\") {
+                isEscape = true;
+                continue;
+            }
+
+            sb.push(c);
+        } else {
+            isEscape = false;
+            switch (c) {
+                case "\"":
+                    sb.push("\"");
+                    break;
+                case "n":
+                    sb.push("\n");
+                    break;
+                case "r":
+                    sb.push("\r");
+                    break;
+                case "b":
+                    sb.push("\b");
+                    break;
+                case "t":
+                    sb.push("\t");
+                    break;
+                case "\\":
+                    sb.push("\\");
+                    break;
+                default:
+                    errorMessage = "Invalid escape sequence \\" + c;
+                    break;
+            }
+        }
+    }
+
+    if (errorMessage) {
+        return [undefined, errorMessage]
+    }
+
+    const result = sb.join("");
+    return [result, ""];
+}
+addTestGroup("String parsing", [parseStringLiteral, computeStringForStringLiteral], () => {
+	addTest("Normal string", r => {
+		const expr = parseExpressionFromText(`"hi"`);
+		testAssert(r, expr?.type === Expression_StringLiteral);
+		testEqual(r, expr.val, "hi")
+	});
+});
+
+addTestGroup("String parsing", [parseStringLiteral, computeStringForStringLiteral], () => {
+	addTest("Normal string", r => {
+		const expr = parseExpressionFromText(`"hi"`);
+		testAssert(r, expr?.type === Expression_StringLiteral);
+		testEqual(r, expr.val, "hi")
+	});
+
+	addTest("Empty string", r => {
+		const expr = parseExpressionFromText(`""`);
+		testAssert(r, expr?.type === Expression_StringLiteral);
+		testEqual(r, expr.val, "")
+	});
+
+	addTest("Escape sequence - backslash", r => {
+		const expr = parseExpressionFromText(`"\\\\"`);
+		testAssert(r, expr?.type === Expression_StringLiteral);
+		testEqual(r, expr.val, "\\")
+	});
+
+	addTest("Escape sequence - quote", r => {
+		const expr = parseExpressionFromText(`"\\""`);
+		testAssert(r, expr?.type === Expression_StringLiteral);
+		testEqual(r, expr.val, "\"")
+	});
+
+	addTest("Whitespace", r => {
+		const expr = parseExpressionFromText(`"    "`);
+		testAssert(r, expr?.type === Expression_StringLiteral);
+		testEqual(r, expr.val, "    ")
+	});
+})
+
 export function parseProgram(parser: Parser): Program {
 	const program: Program = {
 		statements: [],
@@ -906,7 +1317,7 @@ export function parseProgram(parser: Parser): Program {
 	return program;
 }
 
-addTestGroup("parseProgram", () => {
+addTestGroup("parseProgram", [parseProgram], () => {
 	addTest("Parse a line", r => {
 		const program = parseProgramFromText(`x = y`);
 		testEqual(r, program.statements.length, 1);
