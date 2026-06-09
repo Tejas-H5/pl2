@@ -1,17 +1,6 @@
 import { addTest, addTestGroup, test, testAssert, testDeepEqual, testEqual } from "src/testing/testing";
 import { assert } from "./assert";
-import {
-    advance,
-    advanceBy,
-    advanceToNextNewLine,
-    compareCurrent,
-    currentChar,
-    newParser,
-    Parser,
-    parserPos,
-    reachedEnd,
-    reset,
-} from "./parser";
+import {advance, advanceBy, advanceToNextNewLine, compareCurrent, currentChar, newParser, Parser, parserPos, reachedEnd } from "./parser";
 import { isDigit, isLetter, isWhitespace } from "./string-utils";
 import { TextPosition } from "./text-pos";
 
@@ -38,15 +27,19 @@ export type BinaryOperator = {
 	assignment: boolean;
 }
 
-const Expression_Invalid           = 0;
-const Expression_Identifier        = 1;
-const Expression_BinaryExpression  = 2;
-const Expression_FunctionCall      = 3;
-const Expression_IfChain           = 4;
-const Expression_ForLoop           = 5;
-const Expression_TypeInitializer   = 6;
-const Expression_NumberLiteral     = 7;
-const Expression_StringLiteral     = 8;
+const Expression_Invalid            = 0;
+const Expression_Identifier         = 1;
+const Expression_BinaryExpression   = 2;
+const Expression_FunctionCall       = 3;
+const Expression_IfChain            = 4;
+const Expression_ForLoop            = 5;
+const Expression_TypeInitializer    = 6;
+const Expression_NumberLiteral      = 7;
+const Expression_StringLiteral      = 8;
+const Expression_FunctionDefinition = 9;
+const Expression_ReturnStatement    = 10;
+const Expression_Continue           = 11;
+const Expression_Break              = 12;
 
 export type ExpressionType =
  | typeof Expression_Invalid
@@ -56,6 +49,10 @@ export type ExpressionType =
  | typeof Expression_ForLoop
  | typeof Expression_TypeInitializer
  | typeof Expression_NumberLiteral
+ | typeof Expression_FunctionDefinition
+ | typeof Expression_ReturnStatement
+ | typeof Expression_Continue
+ | typeof Expression_Break
  ;
 
 export type ExpressionBase = {
@@ -121,6 +118,32 @@ export type NumberLiteral = ExpressionBase & {
     val: number;
 }
 
+export type FunctionArgument = {
+	name: Identifier;
+	// TODO: type: TypeExpression. I was originally thinking of just leaving everything untyped.
+	// The interesting thing here, is that I wanted to just have x = map<string, number>{}
+	// and omit the ability to do x: map<string, number> = {}. Right? 
+	// But function arguments need to be done like x: map<string, number>, so in order
+	// to be truly consistent, I'll need to do x: map<string, number> = {} and x: map<string, number>, etc. everywhere.
+}
+
+export type FunctionDefinition = ExpressionBase & {
+	type: typeof Expression_FunctionDefinition;
+	args: FunctionArgument[];
+	body: Expression[];
+}
+
+export type ReturnStatement = ExpressionBase & {
+	type: typeof Expression_ReturnStatement;
+	expr: Expression | undefined;
+}
+
+export type LoopControlFlowLabel = ExpressionBase &  {
+	type: 
+		| typeof Expression_Continue
+		| typeof Expression_Break;
+}
+
 export type StringLiteral = ExpressionBase & {
     type: typeof Expression_StringLiteral;
     val: string;
@@ -150,6 +173,9 @@ export type Expression =
  | TypeInitializer
  | NumberLiteral
  | StringLiteral
+ | FunctionDefinition
+ | ReturnStatement
+ | LoopControlFlowLabel
  ;
 
 export function expressionToString(text: string, expr: Expression): string {
@@ -211,11 +237,26 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
     };
 }
 
-addTest("Identifier", r => {
-	const expr = parseExpressionFromText(` henlo `);
-	testAssert(r, !!expr, "!!expr");
-	testAssert(r, expr.type === Expression_Identifier, "expr.type === EXPR_IDENTIFIER");
-	testEqual(r, expr.name, "henlo");
+addTestGroup("Parsing identifiers", [parseIdentifier], () => {
+	addTest("Identifier", r => {
+		const expr = parseExpressionFromText(` henlo `);
+		testAssert(r, !!expr, "!!expr");
+		testAssert(r, expr.type === Expression_Identifier, "expr.type === EXPR_IDENTIFIER");
+		testEqual(r, expr.name, "henlo");
+	});
+
+	addTest("Identifier w numbers", r => {
+		const expr = parseExpressionFromText(` henlo2 `);
+		testAssert(r, !!expr, "!!expr");
+		testAssert(r, expr.type === Expression_Identifier, "expr.type === EXPR_IDENTIFIER");
+		testEqual(r, expr.name, "henlo2");
+	});
+
+	addTest("Identifier cant start with a number", r => {
+		const expr = parseExpressionFromText(` 2henlo2 `);
+		testAssert(r, !!expr, "!!expr");
+		testAssert(r, expr.type !== Expression_Identifier);
+	});
 });
 
 export function parseOperatorInternal(parser: Parser): BinaryOperatorType {
@@ -308,18 +349,20 @@ function parseGroup(parser: Parser): Expression | undefined {
 	return expr;
 }
 
-addTest("Groups", r => {
-	const expr = parseExpressionFromText("a * (b + c)");
-	testAssert(r, !!expr, "0")
-	testAssert(r, expr.type === Expression_BinaryExpression);
-	test(r, isIdentifier(expr.lhs, "a"))
+addTestGroup("Groups", [parseGroup], () => {
+	addTest("Groups", r => {
+		const expr = parseExpressionFromText("a * (b + c)");
+		testAssert(r, !!expr, "0")
+		testAssert(r, expr.type === Expression_BinaryExpression);
+		test(r, isIdentifier(expr.lhs, "a"))
 
-	testAssert(r, expr.rhs.type === Expression_BinaryExpression);
-	test(r, isIdentifier(expr.rhs.lhs, "b"))
-	test(r, isIdentifier(expr.rhs.rhs, "c"))
-});
+		testAssert(r, expr.rhs.type === Expression_BinaryExpression);
+		test(r, isIdentifier(expr.rhs.lhs, "b"))
+		test(r, isIdentifier(expr.rhs.rhs, "c"))
+	});
+})
 
-function checkForKeyword(parser: Parser, keyword: string): boolean {
+function compareCurrentAndAdvance(parser: Parser, keyword: string): boolean {
 	if (!compareCurrent(parser, keyword)) return false;
 	advanceBy(parser, keyword.length);
 	return true;
@@ -358,7 +401,7 @@ function parseCodeBlock(parser: Parser): Expression[] | undefined {
 }
 
 function parseIfChain(parser: Parser): IfChain | undefined {
-	if (!checkForKeyword(parser, "if ")) return;
+	if (!compareCurrentAndAdvance(parser, "if ")) return;
 
 	parseWhitespace(parser);
 
@@ -383,13 +426,13 @@ function parseIfChain(parser: Parser): IfChain | undefined {
 		blocks.push({ check, block });
 
 		parseWhitespace(parser);
-		if (!checkForKeyword(parser, "else ")) {
+		if (!compareCurrentAndAdvance(parser, "else ")) {
 			break;
 		}
 
 		// Parse the if of the next statement.
 		parseWhitespace(parser);
-		if (!checkForKeyword(parser, "if ")) {
+		if (!compareCurrentAndAdvance(parser, "if ")) {
 			// Final block doesn't have an if, but it does have an else.
 			
 			const elseBlock = parseCodeBlock(parser);
@@ -446,7 +489,7 @@ addTestGroup("If-chains", [parseIfChain], () => {
 function parseForLoop(parser: Parser): ForLoop | undefined {
 	const pos = parserPos(parser);
 
-	if (!checkForKeyword(parser, "for ")) return;
+	if (!compareCurrentAndAdvance(parser, "for ")) return;
 
 	parseWhitespace(parser)
 	const varName = parseIdentifier(parser);
@@ -456,7 +499,7 @@ function parseForLoop(parser: Parser): ForLoop | undefined {
 	}
 
 	parseWhitespace(parser)
-	if (!checkForKeyword(parser, "in ")) {
+	if (!compareCurrentAndAdvance(parser, "in ")) {
 		// TODO: error
 		return undefined;
 	}
@@ -470,13 +513,13 @@ function parseForLoop(parser: Parser): ForLoop | undefined {
 	parseWhitespace(parser);
 
 	let rangeType: ForLoopRangeType;
-	if (checkForKeyword(parser, "..<=")) {
+	if (compareCurrentAndAdvance(parser, "..<=")) {
 		rangeType = RANGE_LTE;
-	} else if (checkForKeyword(parser, "..<")) {
+	} else if (compareCurrentAndAdvance(parser, "..<")) {
 		rangeType = RANGE_LT;
-	} else if (checkForKeyword(parser, "..>=")) {
+	} else if (compareCurrentAndAdvance(parser, "..>=")) {
 		rangeType = RANGE_GTE;
-	} else if (checkForKeyword(parser, "..>")) {
+	} else if (compareCurrentAndAdvance(parser, "..>")) {
 		rangeType = RANGE_GT;
 	} else {
 		// ERROR
@@ -519,6 +562,7 @@ addTestGroup("For loops", [parseForLoop], () => {
 		testAssert(r, expr.type === Expression_ForLoop, "1")
 		testEqual(r, expr.range.rangeType, RANGE_LT);
 	});
+
 	addTest("lte", r => {
 		const expr = parseExpressionFromText("for i in a..>=b {}");
 		testAssert(r, !!expr, "0")
@@ -530,35 +574,18 @@ addTestGroup("For loops", [parseForLoop], () => {
 function parseSingularExpression(parser: Parser): Expression | undefined {
 	parseWhitespace(parser);
 
-	const pos = parserPos(parser);
+	if (compareCurrent(parser, "("))    return parseGroup(parser);
+	if (compareCurrent(parser, "if "))  return parseIfChain(parser);
+	if (compareCurrent(parser, "for ")) return parseForLoop(parser)
+	if (compareCurrent(parser, "fn("))  return parseFunctionDefinition(parser)
 
-	const group = parseGroup(parser);
-	if (group) return group;
-	reset(parser, pos);
-
-	const ifBlock = parseIfChain(parser);
-	if (ifBlock) return ifBlock;
-	reset(parser, pos);
-
-	const forLoop = parseForLoop(parser);
-	if (forLoop) return forLoop;
-	reset(parser, pos);
-
-	if (canParseNumberLiteral(parser)) {
-		const number = parseNumberLiteral(parser);
-		if (number) return number;
-
-		// TODO: error here
+	if (compareCurrentAndAdvance(parser, "return ")) {
+		// TODO: error reporting. return is like return() here. I couldn't figure out how else to make it work without semicolons.
 		return undefined;
 	}
-
-	if (currentChar(parser) === "\"") {
-		const str = parseStringLiteral(parser);
-		if (str) return str;
-
-		// TODO: error here
-		return undefined;
-	}
+	if (compareCurrent(parser, "return(")) return parseReturnStatement(parser);
+	if (canParseNumberLiteral(parser)) return parseNumberLiteral(parser);
+	if (currentChar(parser) === "\"")  return parseStringLiteral(parser);
 
 	// Identifier, or function, or data initializer. Do this _after_ keywords.
 	if (isLetter(currentChar(parser))) {
@@ -595,10 +622,45 @@ function parseSingularExpression(parser: Parser): Expression | undefined {
 	return undefined;
 }
 
-function max(a: number, b: number) {
-	if (a > b) return a;
-	return b;
+function parseReturnStatement(parser: Parser): ReturnStatement | undefined {
+	if (!compareCurrentAndAdvance(parser, "return(")) return undefined;
+
+	parseWhitespace(parser);
+
+	const pos = parserPos(parser);
+
+	const expr = parseExpression(parser);
+	if (expr) {
+		parseWhitespace(parser);
+	}
+
+	if (currentChar(parser) !== ")") {
+		// TODO: error reporting
+		return undefined;
+	}
+	advance(parser);
+
+	return {
+		type: Expression_ReturnStatement,
+		expr: expr,
+		start: pos,
+		end: parserPos(parser),
+	};
 }
+
+addTestGroup("Return statement", [parseReturnStatement], () => {
+	addTest("None", r => {
+		const expr = parseExpressionFromText("return()");
+		testAssert(r, expr?.type === Expression_ReturnStatement);
+		testEqual(r, expr.expr, undefined)
+	});
+
+	addTest("Normal", r => {
+		const expr = parseExpressionFromText("return(a)");
+		testAssert(r, expr?.type === Expression_ReturnStatement);
+		test(r, isIdentifier(expr.expr!, "a"))
+	});
+});
 
 function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, op: BinaryOperator | undefined): BinaryExpression | undefined {
 	let expr: BinaryExpression | undefined;
@@ -642,6 +704,7 @@ function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, o
 			if (!newRhs) break;
 
 			expr.rhs = newRhs;
+			op = undefined;
 			continue;
 		}
 
@@ -766,25 +829,38 @@ function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCa
 
 	const args: Expression[] = [];
 
+	let foundClosingParen = false;
 	while(true) {
-		const expr = parseExpression(parser);
-		if (expr) {
-			args.push(expr);
-			parseWhitespace(parser);
-			if (currentChar(parser) === ",") {
-				if (!advance(parser)) return;
-			}
-			continue;
-		} 
-
 		parseWhitespace(parser);
-		if (currentChar(parser) !== ")") {
-			// TODO: report this error
+		if (currentChar(parser) === ")") {
+			advance(parser);
+			foundClosingParen = true;
+			break;
+		}
+
+		const expr = parseExpression(parser);
+		if (!expr) {
+			// TODO: report error
 			return undefined;
 		}
 
-		advance(parser);
-		break;
+		args.push(expr);
+
+		parseWhitespace(parser);
+		if (currentChar(parser) !== "," && currentChar(parser) !== ")") {
+			// TODO: report error - expected comma.
+			return undefined;
+		}
+
+		if (currentChar(parser) === ",") {
+			advance(parser);
+			parseWhitespace(parser);
+		}
+	}
+
+	if (!foundClosingParen) {
+		// TODO: report this error
+		return undefined;
 	}
 
 	return {
@@ -1301,6 +1377,107 @@ addTestGroup("String parsing", [parseStringLiteral, computeStringForStringLitera
 		testEqual(r, expr.val, "    ")
 	});
 })
+
+export function parseFunctionDefinition(parser: Parser): FunctionDefinition | undefined {
+	parseWhitespace(parser);
+	const pos = parserPos(parser);
+
+	if (!compareCurrentAndAdvance(parser, "fn(")) return;
+
+	parseWhitespace(parser);
+
+	const args: FunctionArgument[] = [];
+
+	let foundClosingParen = false;
+	while (true) {
+		parseWhitespace(parser);
+		if (currentChar(parser) === ")") {
+			advance(parser);
+			foundClosingParen = true;
+			break;
+		}
+
+		const ident = parseIdentifier(parser);
+		if (!ident) {
+			// TODO: report error
+			return undefined;
+		}
+
+		args.push({ name: ident });
+
+		parseWhitespace(parser);
+		if (currentChar(parser) !== "," && currentChar(parser) !== ")") {
+			// TODO: report error - expected comma.
+			return undefined;
+		}
+
+		if (currentChar(parser) === ",") {
+			advance(parser);
+			parseWhitespace(parser);
+		}
+	}
+
+	if (!foundClosingParen) {
+		// TODO: report error
+		return undefined;
+	}
+
+	parseWhitespace(parser);
+	const body = parseCodeBlock(parser);
+	if (!body) {
+		// TODO: report error
+		return undefined;
+	}
+
+	return {
+		type: Expression_FunctionDefinition,
+		start: pos,
+		end: parserPos(parser),
+		args: args,
+		body: body,
+	};
+}
+
+addTestGroup("ParseFunctionDefinition", [parseFunctionDefinition], () => {
+	addTest("basic", r => {
+		const expr = parseExpressionFromText(`fn(a, b, c) { y = x + 1 return(y) }`);
+		testAssert(r, !!expr, "0");
+		testAssert(r, expr?.type === Expression_FunctionDefinition, "1");
+		testEqual(r, expr.args.length, 3)
+		test(r, isIdentifier(expr.args[0].name, "a"))
+		test(r, isIdentifier(expr.args[1].name, "b"))
+		test(r, isIdentifier(expr.args[2].name, "c"))
+		testEqual(r, expr.body.length, 2);
+		testEqual(r, expr.body[0].type, Expression_BinaryExpression);
+		testEqual(r, expr.body[1].type, Expression_ReturnStatement);
+	})
+});
+
+addTestGroup("Complicated parses", [parseProgram], () => {
+	addTest("Level 1", r => {
+		const program = parseProgramFromText(`
+main = fn() {
+	println("Hello world")
+	return(0)
+}
+`)
+		testAssert(r, program.statements.length === 1);
+		testAssert(r, program.statements[0].type === Expression_BinaryExpression);
+		testAssert(r, isIdentifier(program.statements[0].lhs, "main"))
+		testAssert(r, program.statements[0].rhs.type === Expression_FunctionDefinition)
+		testAssert(r, program.statements[0].rhs.args.length === 0)
+		testAssert(r, program.statements[0].rhs.body.length === 2)
+
+		testAssert(r, program.statements[0].rhs.body[0].type === Expression_FunctionCall)
+		testAssert(r, program.statements[0].rhs.body[0].arguments.length === 1)
+		testAssert(r, program.statements[0].rhs.body[0].arguments[0].type === Expression_StringLiteral)
+		testAssert(r, program.statements[0].rhs.body[0].arguments[0].val === "Hello world")
+
+		testAssert(r, program.statements[0].rhs.body[1].type === Expression_ReturnStatement)
+		testAssert(r, program.statements[0].rhs.body[1].expr?.type === Expression_NumberLiteral)
+		testAssert(r, program.statements[0].rhs.body[1].expr.val === 0)
+	});
+});
 
 export function parseProgram(parser: Parser): Program {
 	const program: Program = {

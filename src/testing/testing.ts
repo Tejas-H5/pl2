@@ -31,13 +31,17 @@ export function newTestResult(t: TestContext, name: string): TestResult {
 
 export function test(r: TestResult, outcome: boolean, message = "no message"): boolean {
 	r.checks += 1;
-	if (!outcome) testFailure(r, "Test failed - " + message);
+	if (!outcome) {
+		if (!message) message = "check " + r.checks;
+		testFailure(r, "Test failed - " + message);
+	}
 	return outcome;
 }
 
-export function testAssert(r: TestResult, outcome: boolean, message: string = "..."): asserts outcome {
+export function testAssert(r: TestResult, outcome: boolean, message: string = ""): asserts outcome {
 	r.checks += 1;
 	if (!outcome) {
+		if (!message) message = "check " + r.checks;
 		throw new Error("Test assertion failed - " + message);
 	}
 }
@@ -75,10 +79,14 @@ export function addTest(
 	name: string,
 	fn: ((r: TestResult) => void)
 ) {
+	if (groups.length === 0) {
+		throw new Error("All tests should be grouped under a group");
+	}
 	tests.push({name, fn, group: currentGroup});
 }
 
 // _coveredSymbols allows us to quickly navigate to what we're trying to cover with a particular test.
+// It's more useful when the functionality you're covering is not being provided by the functions you call in the test itself.
 // Rather than typing the name via a string, inserting the symbol allows the LSP to automatically keep names in sync,
 // and notify us when those things get removed from the codebase.
 export function addTestGroup(
@@ -86,6 +94,10 @@ export function addTestGroup(
 	_tryingToCover: unknown[],
 	registerFn: () => void
 ) {
+	if (_tryingToCover.length === 0) {
+		throw new Error("Your test should cover something");
+	}
+
 	groups.push(name);
 	currentGroup = groups.join(" :: ");
 	try {

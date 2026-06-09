@@ -13,3 +13,5 @@ I don't use AI on personal projects yet, but when I do, it will become useful.
 - Tests should be specified in the same file as the things they are testing, and should state which functions they are trying to cover in parenthesis. 
     - NOTE: the bundle will now include tests, unless we're clever about it.
         - Since we don't use React, or any libraries in general, we have plenty of 'budget' to spare in the bundle, so I don't care too much for now.
+- Try to avoid royal we
+    - What do we mean by we? I meant me. Typing 'we' instead is just a bad habbit, not a convention
