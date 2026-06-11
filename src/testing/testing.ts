@@ -7,6 +7,7 @@ export type TestResult = {
 	// Need some way to verify that something happened at all.
 	// But this should be the fast path, so we're not literally logging a bunch of strings for passes.
 	checks: number; 
+	time: number;
 }
 
 export type TestContext = {
@@ -21,9 +22,10 @@ export function newTestingContext(): TestContext {
 
 export function newTestResult(t: TestContext, name: string): TestResult {
 	const result: TestResult = {
-		name:          name,
-		fails:      undefined,
-		checks:        0,
+		name:   name,
+		fails:  undefined,
+		checks: 0,
+		time:   0,
 	};
 	t.tests.push(result);
 	return result;
@@ -111,12 +113,14 @@ export function addTestGroup(
 export function runAllTests(): TestContext {
 	const t = newTestingContext();
 	for (const fn of tests) {
+		const t0 = performance.now();
 		const r = newTestResult(t, fn.group + " :: " + fn.name);
 		try {
 			fn.fn(r);
 		} catch(e) {
 			testFailure(r, "Runtime error: " + e);
 		}
+		r.time = performance.now() - t0;
 	}
 	return t;
 }

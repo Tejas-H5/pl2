@@ -3,3 +3,7 @@ export function assert(val: boolean): asserts val {
 		throw new Error("Assertion failed")
 	}
 }
+
+export function assertNever(val: never) {
+	throw new Error("Unhandled expression type: " + val);
+}

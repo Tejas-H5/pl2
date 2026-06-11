@@ -141,7 +141,7 @@ async function runTscAndGetErrors() {
 	};
 }
 
-function getBundledJs(result: esbuild.BuildResult): string {
+export function getBundledJs(result: esbuild.BuildResult): string {
 	const singlarFile = result.outputFiles?.[0];
 	if (!singlarFile) {
 		throw new Error("Build not working as expected");

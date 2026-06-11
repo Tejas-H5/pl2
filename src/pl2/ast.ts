@@ -1,4 +1,3 @@
-import { addTest, addTestGroup, test, testAssert, testDeepEqual, testEqual } from "src/testing/testing";
 import { assert } from "./assert";
 import {advance, advanceBy, advanceToNextNewLine, compareCurrent, currentChar, newParser, Parser, parserPos, reachedEnd } from "./parser";
 import { isDigit, isLetter, isWhitespace } from "./string-utils";
@@ -8,38 +7,48 @@ export type Program = {
 	statements: Expression[];
 }
 
-const OP_INVALID  = 0;
-const OP_ADD      = 1;
-const OP_SUBTRACT = 2;
-const OP_MULTIPLY = 3;
-const OP_DIVIDE   = 4;
+export const OP_NONE     = 0;
+export const OP_ADD      = 1;
+export const OP_SUBTRACT = 2;
+export const OP_MULTIPLY = 3;
+export const OP_DIVIDE   = 4;
 
 export type BinaryOperatorType =
- | typeof OP_INVALID
+ | typeof OP_NONE
  | typeof OP_ADD
  | typeof OP_SUBTRACT
  | typeof OP_MULTIPLY
  | typeof OP_DIVIDE
  ;
 
+export function operatorToString(op: number): string {
+	switch(op) {
+		case OP_ADD:      return "+";
+		case OP_SUBTRACT: return "-";
+		case OP_MULTIPLY: return "*";
+		case OP_DIVIDE:   return "/";
+	}
+	return "?";
+}
+
 export type BinaryOperator = {
 	type: BinaryOperatorType;
 	assignment: boolean;
 }
 
-const Expression_Invalid            = 0;
-const Expression_Identifier         = 1;
-const Expression_BinaryExpression   = 2;
-const Expression_FunctionCall       = 3;
-const Expression_IfChain            = 4;
-const Expression_ForLoop            = 5;
-const Expression_TypeInitializer    = 6;
-const Expression_NumberLiteral      = 7;
-const Expression_StringLiteral      = 8;
-const Expression_FunctionDefinition = 9;
-const Expression_ReturnStatement    = 10;
-const Expression_Continue           = 11;
-const Expression_Break              = 12;
+export const Expression_Invalid            = 0;
+export const Expression_Identifier         = 1;
+export const Expression_BinaryExpression   = 2;
+export const Expression_FunctionCall       = 3;
+export const Expression_IfChain            = 4;
+export const Expression_ForLoop            = 5;
+export const Expression_TypeInitializer    = 6;
+export const Expression_NumberLiteral      = 7;
+export const Expression_StringLiteral      = 8;
+export const Expression_FunctionDefinition = 9;
+export const Expression_Return             = 10;
+export const Expression_Continue           = 11;
+export const Expression_Break              = 12;
 
 export type ExpressionType =
  | typeof Expression_Invalid
@@ -50,7 +59,7 @@ export type ExpressionType =
  | typeof Expression_TypeInitializer
  | typeof Expression_NumberLiteral
  | typeof Expression_FunctionDefinition
- | typeof Expression_ReturnStatement
+ | typeof Expression_Return
  | typeof Expression_Continue
  | typeof Expression_Break
  ;
@@ -61,7 +70,7 @@ export type ExpressionBase = {
 	end:   TextPosition;
 }
 
-type BinaryExpression = ExpressionBase & {
+export type BinaryExpression = ExpressionBase & {
 	type: typeof Expression_BinaryExpression;
 	lhs: Expression;
 	op:  BinaryOperator;
@@ -95,9 +104,9 @@ export type ForLoop = ExpressionBase & {
 }
 
 export type ForLoopRange = {
-	varName: Identifier;
-	initial: Expression;
-	target: Expression;
+	varName:   Identifier;
+	start:     Expression;
+	end:       Expression;
 	rangeType: ForLoopRangeType;
 };
 
@@ -134,7 +143,7 @@ export type FunctionDefinition = ExpressionBase & {
 }
 
 export type ReturnStatement = ExpressionBase & {
-	type: typeof Expression_ReturnStatement;
+	type: typeof Expression_Return;
 	expr: Expression | undefined;
 }
 
@@ -237,34 +246,12 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
     };
 }
 
-addTestGroup("Parsing identifiers", [parseIdentifier], () => {
-	addTest("Identifier", r => {
-		const expr = parseExpressionFromText(` henlo `);
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_Identifier, "expr.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.name, "henlo");
-	});
-
-	addTest("Identifier w numbers", r => {
-		const expr = parseExpressionFromText(` henlo2 `);
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_Identifier, "expr.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.name, "henlo2");
-	});
-
-	addTest("Identifier cant start with a number", r => {
-		const expr = parseExpressionFromText(` 2henlo2 `);
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type !== Expression_Identifier);
-	});
-});
-
 export function parseOperatorInternal(parser: Parser): BinaryOperatorType {
 	if (compareCurrent(parser, "+")) { advanceBy(parser, 1); return OP_ADD; }
 	if (compareCurrent(parser, "-")) { advanceBy(parser, 1); return OP_SUBTRACT; }
 	if (compareCurrent(parser, "*")) { advanceBy(parser, 1); return OP_MULTIPLY; }
 	if (compareCurrent(parser, "/")) { advanceBy(parser, 1); return OP_DIVIDE; }
-	return OP_INVALID;
+	return OP_NONE;
 }
 
 export function parseOperator(parser: Parser): BinaryOperator | undefined {
@@ -286,48 +273,7 @@ export function parseOperator(parser: Parser): BinaryOperator | undefined {
 	};
 }
 
-addTestGroup("Operator parsing", [parseOperator], () => {
-	addTest("Normal", r => {
-		const expr = parseExpressionFromText(`x = y`);
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_BinaryExpression, "expr.type === EXPR_BINARY");
-		testDeepEqual(r, expr.op, { type: 0, assignment: true });
-		testAssert(r, expr.lhs.type === Expression_Identifier, "expr.lhs.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.lhs.name, "x");
-		testAssert(r, expr.rhs.type === Expression_Identifier, "expr.rhs.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.rhs.name, "y");
-	});
-
-	addTest("Increment", r => {
-		const expr = parseExpressionFromText(`x += y`);
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_BinaryExpression, "expr.type === EXPR_BINARY");
-		testDeepEqual(r, expr.op, { type: OP_ADD, assignment: true });
-		testAssert(r, expr.lhs.type === Expression_Identifier, "expr.lhs.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.lhs.name, "x");
-		testAssert(r, expr.rhs.type === Expression_Identifier, "expr.rhs.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.rhs.name, "y");
-	});
-
-	addTest("Add", r => {
-		const expr = parseExpressionFromText(`x + y`);
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_BinaryExpression, "expr.type === EXPR_BINARY");
-		testDeepEqual(r, expr.op, { type: OP_ADD, assignment: false });
-		testAssert(r, expr.lhs.type === Expression_Identifier, "expr.lhs.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.lhs.name, "x");
-		testAssert(r, expr.rhs.type === Expression_Identifier, "expr.rhs.type === EXPR_IDENTIFIER");
-		testEqual(r, expr.rhs.name, "y");
-	});
-
-	addTest("Invalid operator", r => {
-		const parser = newParser("x")
-		const result = parseOperator(parser);
-		testEqual(r, result, undefined);
-	});
-})
-
-function parseGroup(parser: Parser): Expression | undefined {
+export function parseGroup(parser: Parser): Expression | undefined {
 	if (currentChar(parser) !== "(") return;
 
 	if (!advance(parser)) return;
@@ -348,19 +294,6 @@ function parseGroup(parser: Parser): Expression | undefined {
 
 	return expr;
 }
-
-addTestGroup("Groups", [parseGroup], () => {
-	addTest("Groups", r => {
-		const expr = parseExpressionFromText("a * (b + c)");
-		testAssert(r, !!expr, "0")
-		testAssert(r, expr.type === Expression_BinaryExpression);
-		test(r, isIdentifier(expr.lhs, "a"))
-
-		testAssert(r, expr.rhs.type === Expression_BinaryExpression);
-		test(r, isIdentifier(expr.rhs.lhs, "b"))
-		test(r, isIdentifier(expr.rhs.rhs, "c"))
-	});
-})
 
 function compareCurrentAndAdvance(parser: Parser, keyword: string): boolean {
 	if (!compareCurrent(parser, keyword)) return false;
@@ -400,7 +333,7 @@ function parseCodeBlock(parser: Parser): Expression[] | undefined {
 	return statements;
 }
 
-function parseIfChain(parser: Parser): IfChain | undefined {
+export function parseIfChain(parser: Parser): IfChain | undefined {
 	if (!compareCurrentAndAdvance(parser, "if ")) return;
 
 	parseWhitespace(parser);
@@ -456,37 +389,7 @@ function parseIfChain(parser: Parser): IfChain | undefined {
 	};
 }
 
-addTestGroup("If-chains", [parseIfChain], () => {
-	addTest("Single if", r => {
-		const expr = parseExpressionFromText(`if a { b c d }`)
-		testAssert(r, !!expr);
-		testAssert(r, expr.type === Expression_IfChain);
-		testEqual(r, expr.else, undefined);
-		testEqual(r, expr.blocks.length, 1);
-		testEqual(r, expr.blocks[0].block.length, 3);
-	})
-
-	addTest("If-else", r => {
-		const expr = parseExpressionFromText(`if a { b c d } else { f g }`)
-		testAssert(r, !!expr, "0");
-		testAssert(r, expr.type === Expression_IfChain, "1");
-		testEqual(r, expr.else!.length, 2);
-		testEqual(r, expr.blocks.length, 1);
-		testEqual(r, expr.blocks[0].block.length, 3);
-	})
-
-	addTest("If-else-if", r => {
-		const expr = parseExpressionFromText(`if a { b c d } else if b { f g } else { h }`)
-		testAssert(r, !!expr, "0");
-		testAssert(r, expr.type === Expression_IfChain, "1");
-		testEqual(r, expr.else!.length, 1);
-		testEqual(r, expr.blocks.length, 2);
-		testEqual(r, expr.blocks[0].block.length, 3);
-		testEqual(r, expr.blocks[1].block.length, 2);
-	})
-});
-
-function parseForLoop(parser: Parser): ForLoop | undefined {
+export function parseForLoop(parser: Parser): ForLoop | undefined {
 	const pos = parserPos(parser);
 
 	if (!compareCurrentAndAdvance(parser, "for ")) return;
@@ -547,31 +450,15 @@ function parseForLoop(parser: Parser): ForLoop | undefined {
 		end:   parserPos(parser),
 		range: {
 			varName:   varName,
-			initial:   initial,
-			target:    target,
+			start:   initial,
+			end:    target,
 			rangeType: rangeType,
 		},
 		statements: block,
 	};
 }
 
-addTestGroup("For loops", [parseForLoop], () => {
-	addTest("lte", r => {
-		const expr = parseExpressionFromText("for i in a..<b {}");
-		testAssert(r, !!expr, "0")
-		testAssert(r, expr.type === Expression_ForLoop, "1")
-		testEqual(r, expr.range.rangeType, RANGE_LT);
-	});
-
-	addTest("lte", r => {
-		const expr = parseExpressionFromText("for i in a..>=b {}");
-		testAssert(r, !!expr, "0")
-		testAssert(r, expr.type === Expression_ForLoop, "1")
-		testEqual(r, expr.range.rangeType, RANGE_GTE);
-	});
-})
-
-function parseSingularExpression(parser: Parser): Expression | undefined {
+export function parseSingularExpression(parser: Parser): Expression | undefined {
 	parseWhitespace(parser);
 
 	if (compareCurrent(parser, "("))    return parseGroup(parser);
@@ -622,7 +509,7 @@ function parseSingularExpression(parser: Parser): Expression | undefined {
 	return undefined;
 }
 
-function parseReturnStatement(parser: Parser): ReturnStatement | undefined {
+export function parseReturnStatement(parser: Parser): ReturnStatement | undefined {
 	if (!compareCurrentAndAdvance(parser, "return(")) return undefined;
 
 	parseWhitespace(parser);
@@ -641,28 +528,14 @@ function parseReturnStatement(parser: Parser): ReturnStatement | undefined {
 	advance(parser);
 
 	return {
-		type: Expression_ReturnStatement,
+		type: Expression_Return,
 		expr: expr,
 		start: pos,
 		end: parserPos(parser),
 	};
 }
 
-addTestGroup("Return statement", [parseReturnStatement], () => {
-	addTest("None", r => {
-		const expr = parseExpressionFromText("return()");
-		testAssert(r, expr?.type === Expression_ReturnStatement);
-		testEqual(r, expr.expr, undefined)
-	});
-
-	addTest("Normal", r => {
-		const expr = parseExpressionFromText("return(a)");
-		testAssert(r, expr?.type === Expression_ReturnStatement);
-		test(r, isIdentifier(expr.expr!, "a"))
-	});
-});
-
-function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, op: BinaryOperator | undefined): BinaryExpression | undefined {
+export function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, op: BinaryOperator | undefined): BinaryExpression | undefined {
 	let expr: BinaryExpression | undefined;
 
 	while (true) {
@@ -732,7 +605,7 @@ function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, o
 	return expr;
 }
 
-function parseExpression(parser: Parser): Expression | undefined {
+export function parseExpression(parser: Parser): Expression | undefined {
 	let expr = parseSingularExpression(parser);
 	if (!expr) return undefined;
 
@@ -743,7 +616,7 @@ function parseExpression(parser: Parser): Expression | undefined {
 }
 
 
-function getOpLevel(op: BinaryOperatorType): number {
+export function getOpLevel(op: BinaryOperatorType): number {
 	// The binary-expression tree has levels defined by operators.
 	//
 	// e.g: a + b + c * d * e + f
@@ -765,64 +638,7 @@ function getOpLevel(op: BinaryOperatorType): number {
 	return 0;
 }
 
-function isIdentifier(expr: Expression | undefined, name: string): expr is Identifier {
-	if (!expr) return false;
-	if (expr.type !== Expression_Identifier) return false;
-	return expr.name === name;
-}
-
-addTestGroup("Binary expressions", [parseExpression, parseBinaryExpression], () => {
-	addTest("add", r => {
-		const expr = parseExpressionFromText("a + b");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_BinaryExpression);
-		test(r, isIdentifier(expr.lhs, "a"))
-		test(r, isIdentifier(expr.rhs, "b"))
-	});
-
-	addTest("add chain", r => {
-		const expr = parseExpressionFromText("a + b + c");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_BinaryExpression);
-		testAssert(r, expr.lhs.type === Expression_BinaryExpression);
-		test(r, isIdentifier(expr.lhs.lhs, "a"))
-		test(r, isIdentifier(expr.lhs.rhs, "b"))
-		test(r, isIdentifier(expr.rhs, "c"))
-	});
-
-	addTest("precedence parsing", r => {
-		const expr = parseExpressionFromText("a * b + c * d");
-		testAssert(r, !!expr, "!!expr");
-
-		testAssert(r, expr.type === Expression_BinaryExpression, "0");
-		testAssert(r, expr.lhs.type === Expression_BinaryExpression, "1");
-		testAssert(r, expr.rhs.type === Expression_BinaryExpression, "2");
-
-		test(r, isIdentifier(expr.lhs.lhs, "a"))
-		test(r, isIdentifier(expr.lhs.rhs, "b"))
-
-		test(r, isIdentifier(expr.rhs.lhs, "c"))
-		test(r, isIdentifier(expr.rhs.rhs, "d"))
-	});
-
-	addTest("precedence parsing 2", r => {
-		// NOTE: multiple correct solutions exist...
-		const expr = parseExpressionFromText("a + b * c + d");
-		testAssert(r, !!expr, "!!expr");
-
-		testAssert(r, expr.type === Expression_BinaryExpression, "0");
-		test(r, isIdentifier(expr.lhs, "a"))
-		testAssert(r, expr.rhs.type === Expression_BinaryExpression, "1");
-
-		test(r, isIdentifier(expr.rhs.rhs, "d"))
-		testAssert(r, expr.rhs.lhs.type === Expression_BinaryExpression, "2");
-
-		test(r, isIdentifier(expr.rhs.lhs.lhs, "b"))
-		test(r, isIdentifier(expr.rhs.lhs.rhs, "c"))
-	});
-});
-
-function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCall | undefined {
+export function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCall | undefined {
 	if (currentChar(parser) !== "(") return;
 
 	if (!advance(parser)) return;
@@ -872,56 +688,7 @@ function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCa
 	};
 }
 
-addTestGroup("Function call arguments", [parseFunctionCall], () => {
-	addTest("no args", r => {
-		const expr = parseExpressionFromText("a()");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall);
-		testEqual(r, expr.name.name, "a");
-	})
-
-	addTest("one arg", r => {
-		const expr = parseExpressionFromText("a(y)");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall);
-		testEqual(r, expr.name.name, "a");
-		testEqual(r, expr.arguments.length, 1);
-		testEqual(r, expr.arguments[0].type, Expression_Identifier);
-		testEqual(r, (expr.arguments[0] as Identifier).name, "y");
-	})
-
-	addTest("two args", r => {
-		const expr = parseExpressionFromText("a(x, y)");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall);
-		testEqual(r, expr.name.name, "a");
-		testEqual(r, expr.arguments.length, 2);
-		testEqual(r, expr.arguments[0].type, Expression_Identifier);
-		testEqual(r, (expr.arguments[0] as Identifier).name, "x");
-		testEqual(r, expr.arguments[1].type, Expression_Identifier);
-		testEqual(r, (expr.arguments[1] as Identifier).name, "y");
-	})
-
-	addTest("nested calls", r => {
-		const expr = parseExpressionFromText("a(b(c()))");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_FunctionCall);
-
-		testEqual(r, expr.name.name, "a");
-		testEqual(r, expr.arguments.length, 1);
-		testEqual(r, expr.arguments[0].type, Expression_FunctionCall);
-
-		const bFn = (expr.arguments[0] as FunctionCall);
-		testEqual(r, bFn.name.name, "b");
-		testEqual(r, bFn.arguments.length, 1);
-
-		const cFn = (bFn.arguments[0] as FunctionCall);
-		testEqual(r, cFn.name.name, "c");
-		testEqual(r, cFn.arguments.length, 0);
-	})
-});
-
-function parseTypeInitializer(
+export function parseTypeInitializer(
 	parser: Parser,
 	identifier: Identifier,
 	typeArgs: Identifier[] | undefined
@@ -965,7 +732,7 @@ function parseTypeInitializer(
 	};
 }
 
-function parseTypeArgs(parser: Parser): Identifier[] | undefined {
+export function parseTypeArgs(parser: Parser): Identifier[] | undefined {
 	if (currentChar(parser) !== "<") return;
 	advance(parser);
 
@@ -995,33 +762,7 @@ function parseTypeArgs(parser: Parser): Identifier[] | undefined {
 	return args;
 }
 
-addTestGroup("Type initializers", [parseTypeArgs, parseTypeInitializer], () => {
-	addTest("List", r => {
-		const expr = parseExpressionFromText("list<f32>{a, a, a, a}");
-		testAssert(r, !!expr, "!!expr");
-		testAssert(r, expr.type === Expression_TypeInitializer);
-		testAssert(r, !!expr.typeArgs);
-		test(r, isIdentifier(expr.typeArgs[0], "f32"));
-		testEqual(r, expr.typename.name, "list");
-		testEqual(r, expr.args.length, 4);
-	})
-
-	addTest("Map", r => {
-		const expr = parseExpressionFromText("map<string, f32>{a=b,c=d,e=f}");
-		testAssert(r, !!expr, "0");
-		testAssert(r, expr.type === Expression_TypeInitializer, "1");
-
-		testAssert(r, !!expr.typeArgs);
-		testEqual(r, expr.typeArgs.length, 2);
-		testEqual(r, expr.typeArgs[0].name, "string");
-		testEqual(r, expr.typeArgs[1].name, "f32");
-
-		testEqual(r, expr.typename.name, "map");
-		testEqual(r, expr.args.length, 3);
-	})
-});
-
-function parseNumberLiteral(parser: Parser): NumberLiteral | undefined {
+export function parseNumberLiteral(parser: Parser): NumberLiteral | undefined {
     const pos = parserPos(parser);
 
     let isNegative = false;
@@ -1090,123 +831,7 @@ function parseNumberLiteral(parser: Parser): NumberLiteral | undefined {
     return result;
 }
 
-addTestGroup("Number parsing", [parseNumberLiteral, computeNumberForNumberExpression], () => {
-	addTest("Zero", r => {
-		const expr = parseExpressionFromText("0.00");
-		testAssert(r, expr?.type === Expression_NumberLiteral);
-		testEqual(r, expr.isNegative, false);
-		testEqual(r, expr.val, 0);
-		testEqual(r, expr.integerPart, "0");
-		testEqual(r, expr.decimalPart, "00");
-		testEqual(r, expr.exponentPart, undefined)
-	});
-
-	addTest("One_e_2", r => {
-		const expr = parseExpressionFromText("1.00e2");
-		testAssert(r, expr?.type === Expression_NumberLiteral);
-		testEqual(r, expr.isNegative, false);
-		testEqual(r, expr.val, 100);
-		testEqual(r, expr.integerPart, "1");
-		testEqual(r, expr.decimalPart, "00");
-		testEqual(r, expr.exponentPart, "2");
-	});
-
-	addTest("+One_e_2", r => {
-		const expr = parseExpressionFromText("+1.00e2");
-		testAssert(r, expr?.type === Expression_NumberLiteral);
-		testEqual(r, expr.isNegative, false);
-		testEqual(r, expr.val, 100);
-		testEqual(r, expr.integerPart, "1");
-		testEqual(r, expr.decimalPart, "00");
-		testEqual(r, expr.exponentPart, "2");
-	});
-
-	addTest("-One_e_2", r => {
-		const expr = parseExpressionFromText("-1.00e2");
-		testAssert(r, expr?.type === Expression_NumberLiteral);
-		testEqual(r, expr.isNegative, true);
-		testEqual(r, expr.val, -100);
-		testEqual(r, expr.integerPart, "1");
-		testEqual(r, expr.decimalPart, "00");
-		testEqual(r, expr.exponentPart, "2");
-	});
-
-	addTest("-One-e_+2", r => {
-		const expr = parseExpressionFromText("-1.00e+2");
-		testAssert(r, expr?.type === Expression_NumberLiteral);
-		testEqual(r, expr.isNegative, true);
-		testEqual(r, expr.val, -100);
-		testEqual(r, expr.integerPart, "1");
-		testEqual(r, expr.decimalPart, "00");
-		testEqual(r, expr.exponentPart, "2");
-	});
-
-	addTest("-One-e_-2", r => {
-		const expr = parseExpressionFromText("-1.00e-2");
-		testAssert(r, expr?.type === Expression_NumberLiteral);
-		testEqual(r, expr.isNegative, true);
-		testEqual(r, expr.val, -0.01);
-		testEqual(r, expr.integerPart, "1");
-		testEqual(r, expr.decimalPart, "00");
-		testEqual(r, expr.exponentPart, "-2");
-	});
-
-	addTest("0 - -1", r => {
-		const expr = parseExpressionFromText("0 - -1");
-		testAssert(r, expr?.type === Expression_BinaryExpression);
-
-		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.lhs.val, 0);
-
-		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.rhs.val, -1);
-	});
-
-	addTest("0 - +1", r => {
-		const expr = parseExpressionFromText("0 - +1");
-		testAssert(r, expr?.type === Expression_BinaryExpression);
-
-		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.lhs.val, 0);
-
-		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.rhs.val, 1);
-	});
-
-	addTest("-1 - +0", r => {
-		const expr = parseExpressionFromText("-1 - +0");
-		testAssert(r, expr?.type === Expression_BinaryExpression);
-
-		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.lhs.val, -1);
-
-		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.rhs.val, 0);
-	});
-
-	addTest("+1 - +0", r => {
-		const expr = parseExpressionFromText("+1 - +0");
-		testAssert(r, expr?.type === Expression_BinaryExpression);
-
-		testAssert(r, expr.lhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.lhs.val, 1);
-
-		testAssert(r, expr.rhs.type === Expression_NumberLiteral);
-		testEqual(r, expr.rhs.val, 0);
-	});
-
-	addTest("+ -1", r => {
-		const expr = parseExpressionFromText("+ -1");
-		testEqual(r, expr, undefined);
-	});
-
-	addTest("- -1", r => {
-		const expr = parseExpressionFromText("- -1");
-		testEqual(r, expr, undefined);
-	});
-});
-
-function computeNumberForNumberExpression(expr: NumberLiteral): number {
+export function computeNumberForNumberExpression(expr: NumberLiteral): number {
     let result = 0;
 
     if (expr.decimalPart) {
@@ -1241,7 +866,7 @@ function computeNumberForNumberExpression(expr: NumberLiteral): number {
 // - I want the indentation in a string to be relative to the current indentation of the code, not to the
 //      start of the line. Something like the Java """ strings would be good here
 // - need some form of interpolation, since that is always nice to have.
-function parseStringLiteral(parser: Parser): StringLiteral | undefined {
+export function parseStringLiteral(parser: Parser): StringLiteral | undefined {
 	if (currentChar(parser) !== "\"") return;
 
     const startPos = parserPos(parser);
@@ -1289,7 +914,7 @@ function parseStringLiteral(parser: Parser): StringLiteral | undefined {
     return result;
 }
 
-function computeStringForStringLiteral(fullText: string): [string | undefined, string] {
+export function computeStringForStringLiteral(fullText: string): [string | undefined, string] {
     const text = fullText.slice(1, fullText.length - 1);
     const sb = [];
 
@@ -1338,45 +963,6 @@ function computeStringForStringLiteral(fullText: string): [string | undefined, s
     const result = sb.join("");
     return [result, ""];
 }
-addTestGroup("String parsing", [parseStringLiteral, computeStringForStringLiteral], () => {
-	addTest("Normal string", r => {
-		const expr = parseExpressionFromText(`"hi"`);
-		testAssert(r, expr?.type === Expression_StringLiteral);
-		testEqual(r, expr.val, "hi")
-	});
-});
-
-addTestGroup("String parsing", [parseStringLiteral, computeStringForStringLiteral], () => {
-	addTest("Normal string", r => {
-		const expr = parseExpressionFromText(`"hi"`);
-		testAssert(r, expr?.type === Expression_StringLiteral);
-		testEqual(r, expr.val, "hi")
-	});
-
-	addTest("Empty string", r => {
-		const expr = parseExpressionFromText(`""`);
-		testAssert(r, expr?.type === Expression_StringLiteral);
-		testEqual(r, expr.val, "")
-	});
-
-	addTest("Escape sequence - backslash", r => {
-		const expr = parseExpressionFromText(`"\\\\"`);
-		testAssert(r, expr?.type === Expression_StringLiteral);
-		testEqual(r, expr.val, "\\")
-	});
-
-	addTest("Escape sequence - quote", r => {
-		const expr = parseExpressionFromText(`"\\""`);
-		testAssert(r, expr?.type === Expression_StringLiteral);
-		testEqual(r, expr.val, "\"")
-	});
-
-	addTest("Whitespace", r => {
-		const expr = parseExpressionFromText(`"    "`);
-		testAssert(r, expr?.type === Expression_StringLiteral);
-		testEqual(r, expr.val, "    ")
-	});
-})
 
 export function parseFunctionDefinition(parser: Parser): FunctionDefinition | undefined {
 	parseWhitespace(parser);
@@ -1438,47 +1024,6 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 	};
 }
 
-addTestGroup("ParseFunctionDefinition", [parseFunctionDefinition], () => {
-	addTest("basic", r => {
-		const expr = parseExpressionFromText(`fn(a, b, c) { y = x + 1 return(y) }`);
-		testAssert(r, !!expr, "0");
-		testAssert(r, expr?.type === Expression_FunctionDefinition, "1");
-		testEqual(r, expr.args.length, 3)
-		test(r, isIdentifier(expr.args[0].name, "a"))
-		test(r, isIdentifier(expr.args[1].name, "b"))
-		test(r, isIdentifier(expr.args[2].name, "c"))
-		testEqual(r, expr.body.length, 2);
-		testEqual(r, expr.body[0].type, Expression_BinaryExpression);
-		testEqual(r, expr.body[1].type, Expression_ReturnStatement);
-	})
-});
-
-addTestGroup("Complicated parses", [parseProgram], () => {
-	addTest("Level 1", r => {
-		const program = parseProgramFromText(`
-main = fn() {
-	println("Hello world")
-	return(0)
-}
-`)
-		testAssert(r, program.statements.length === 1);
-		testAssert(r, program.statements[0].type === Expression_BinaryExpression);
-		testAssert(r, isIdentifier(program.statements[0].lhs, "main"))
-		testAssert(r, program.statements[0].rhs.type === Expression_FunctionDefinition)
-		testAssert(r, program.statements[0].rhs.args.length === 0)
-		testAssert(r, program.statements[0].rhs.body.length === 2)
-
-		testAssert(r, program.statements[0].rhs.body[0].type === Expression_FunctionCall)
-		testAssert(r, program.statements[0].rhs.body[0].arguments.length === 1)
-		testAssert(r, program.statements[0].rhs.body[0].arguments[0].type === Expression_StringLiteral)
-		testAssert(r, program.statements[0].rhs.body[0].arguments[0].val === "Hello world")
-
-		testAssert(r, program.statements[0].rhs.body[1].type === Expression_ReturnStatement)
-		testAssert(r, program.statements[0].rhs.body[1].expr?.type === Expression_NumberLiteral)
-		testAssert(r, program.statements[0].rhs.body[1].expr.val === 0)
-	});
-});
-
 export function parseProgram(parser: Parser): Program {
 	const program: Program = {
 		statements: [],
@@ -1493,24 +1038,6 @@ export function parseProgram(parser: Parser): Program {
 
 	return program;
 }
-
-addTestGroup("parseProgram", [parseProgram], () => {
-	addTest("Parse a line", r => {
-		const program = parseProgramFromText(`x = y`);
-		testEqual(r, program.statements.length, 1);
-	});
-
-	addTest("Parse two lines", r => {
-		// May want to disallow this somehow, but the parser can still handle it. 
-		const program = parseProgramFromText(`x = y y = z`);
-		testEqual(r, program.statements.length, 2);
-	});
-
-	addTest("Parse two lines, different line", r => {
-		const program = parseProgramFromText(`x = y\ny = z`);
-		testEqual(r, program.statements.length, 2);
-	});
-});
 
 export function parseProgramFromText(code: string) {
 	const parser = newParser(code);

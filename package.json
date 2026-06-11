@@ -7,9 +7,11 @@
   "type": "module",
   "scripts": {
     "dev": "node ./build/build.ts devserver",
-    "build": "node ./build/build.ts build"
+    "build": "node ./build/build.ts build",
+    "test": "node ./build/test.ts"
   },
   "devDependencies": {
+    "@types/node": "^25.9.3",
     "esbuild": "^0.28.0",
     "typescript": "^6.0.3"
   }
