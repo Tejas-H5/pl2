@@ -1,40 +1,20 @@
 import { assertNever } from "./assert";
 import * as ast from "./ast";
-
-export const PROGRAM_OUTPUT_VARIABLE = 0;
-
-export type ProgramOutputType
-	= typeof PROGRAM_OUTPUT_VARIABLE;
-
-type ProgramOutputBase = {
-	type: ProgramOutputType;
-}
-
-type ProgramOutputVariable = ProgramOutputBase & {
-	type: typeof PROGRAM_OUTPUT_VARIABLE;
-	value: ProgramValue;
-};
-
-export type ProgramOutput
-	= ProgramOutputVariable;
-
-export type ProgramResult = {
-	output: ProgramOutput[];
-}
+import { newParser } from "./parser";
 
 export type ProgramValue = {
 }
 
-export function newProgramResult(): ProgramResult {
-	return {
-		output: [],
-	};
-}
-
-export function interpretProgram(program: ast.Program) {
-	const result = newProgramResult();
-
+export function interpretProgram(program: ast.Program): ProgramIterator {
 	const iter = newProgramIterator(program);
+
+	// The root scope will never get popped.
+	pushScope(iter, false); 
+ 
+	for (const expr of program.statements) {
+		const [val, err] = evaluateExpression(expr, iter);
+		if (err || val !== NOTHING) break;
+	}
 
 	// while (true) {
 	// 	if (!stepProgram(iter)) {
@@ -42,6 +22,13 @@ export function interpretProgram(program: ast.Program) {
 	// 	}
 	// }
 
+	return iter;
+}
+
+export function interpretCode(code: string): ProgramIterator {
+	const parser = newParser(code);
+	const program = ast.parseProgram(parser);
+	const result = interpretProgram(program);
 	return result;
 }
 
@@ -59,7 +46,7 @@ type Scope = {
 }
 
 
-function newProgramIterator(program: ast.Program): ProgramIterator {
+export function newProgramIterator(program: ast.Program): ProgramIterator {
 	return {
 		program: program,
 		nextStatementIdx: 0,
@@ -68,7 +55,7 @@ function newProgramIterator(program: ast.Program): ProgramIterator {
 	};
 }
 
-function pushScope(iter: ProgramIterator, allowContinueBreak: boolean): Scope {
+export function pushScope(iter: ProgramIterator, allowContinueBreak: boolean): Scope {
 	const scope: Scope = {
 		vars: new Map(),
 		allowContinueBreak: allowContinueBreak
@@ -77,16 +64,16 @@ function pushScope(iter: ProgramIterator, allowContinueBreak: boolean): Scope {
 	return scope;
 }
 
-function allowsContinueOrBreak(iter: ProgramIterator): boolean {
+export function allowsContinueOrBreak(iter: ProgramIterator): boolean {
 	if (iter.scopes.length === 0) return false;
 	return iter.scopes[iter.scopes.length - 1].allowContinueBreak;
 }
 
-function popScope(iter: ProgramIterator) {
+export function popScope(iter: ProgramIterator) {
 	return iter.scopes.pop();
 }
 
-function getVar(iter: ProgramIterator, name: string): Result | undefined {
+export function getVar(iter: ProgramIterator, name: string): Result | undefined {
 	for (let i = iter.scopes.length - 1; i >= 0; i--) {
 		const scope = iter.scopes[i];
 		const value = scope.vars.get(name)
@@ -96,19 +83,19 @@ function getVar(iter: ProgramIterator, name: string): Result | undefined {
 	return undefined;
 }
 
-function setVar(iter: ProgramIterator, name: string, value: Result) {
+export function setVar(iter: ProgramIterator, name: string, value: Result) {
 	if (iter.scopes.length === 0) return;
 	const lastScope = iter.scopes[iter.scopes.length - 1];
 	lastScope.vars.set(name, value);
 }
 
-const Result_Nothing  = 0; // Also represented with 'undefined'
-const Result_Number   = 1;
-const Result_String   = 2;
-const Result_Boolean  = 3;
-const Result_Function = 4;
-const Result_List     = 5;
-const Result_Map      = 6;
+export const Result_Nothing  = 0; // Also represented with 'undefined'
+export const Result_Number   = 1;
+export const Result_String   = 2;
+export const Result_Boolean  = 3;
+export const Result_Function = 4;
+export const Result_List     = 5;
+export const Result_Map      = 6;
 
 export function typeToString(type: ResultType) {
 	switch(type) {
@@ -122,7 +109,6 @@ export function typeToString(type: ResultType) {
 		default: assertNever(type);
 	}
 }
-
 
 export type ResultType =
  | typeof Result_Nothing
@@ -182,13 +168,13 @@ type EvaluateError = {
 	reason: string;
 } | null;
 
-function newError(reason: string): EvaluateError {
+export function newError(reason: string): EvaluateError {
 	return {
 		reason: reason,
 	}
 }
 
-function invalidOperatorError(op: ast.BinaryOperator, lhs: Result, rhs: Result): EvaluateError {
+export function invalidOperatorError(op: ast.BinaryOperator, lhs: Result, rhs: Result): EvaluateError {
 	return newError(`${ast.operatorToString(op.type)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`)
 }
 
@@ -199,7 +185,7 @@ const CONTINUE: Result = { type: Result_Nothing }
 
 // TODO: Don't end up with this - we need an alternative formulation that lets us step through the program.
 // It doesn't need to be an elaborate VM like last time - a simple control-flow graph is fine.
-function evaluateExpression(expr: ast.Expression, iter: ProgramIterator): [Result, EvaluateError] {
+export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator): [Result, EvaluateError] {
 	switch (expr.type) {
 		case ast.Expression_Identifier:       return evaluateIdentifier(expr, iter);
 		case ast.Expression_BinaryExpression: return evaluateBinaryOperation(expr, iter);
@@ -458,7 +444,7 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 	return [NOTHING, newError(`Don't know how to initialize this type: ${expr.typename.name}`)];
 }
 
-function isHashable(result: Result): boolean {
+export function isHashable(result: Result): boolean {
 	switch (result.type) {
 		case Result_Nothing:  return true;
 		case Result_Number:   return true;
@@ -469,7 +455,7 @@ function isHashable(result: Result): boolean {
 	return false;
 }
 
-function getKey(result: Result): any {
+export function getKey(result: Result): any {
 	switch (result.type) {
 		case Result_Nothing:  return NOTHING;
 		case Result_Number:   return result.val;
@@ -477,52 +463,3 @@ function getKey(result: Result): any {
 		case Result_Boolean:  return result.val;
 	}
 }
-
-// function stepProgram(iter: ProgramIterator): boolean {
-// 	if (iter.stack.length === 0) {
-// 		const statement = iter.program.statements[iter.nextStatementIdx];
-// 		iter.stack.push(statement);
-// 	}
-//
-// 	switch (statement.type) {
-// 		case ast.Expression_Identifier: {
-// 			statement.type
-// 		} break;
-// 		case ast.Expression_BinaryExpression: {
-//
-// 		} break;
-// 		case ast.Expression_FunctionCall: {
-//
-// 		} break;
-// 		case ast.Expression_IfChain: {
-//
-// 		} break;
-// 		case ast.Expression_ForLoop: {
-//
-// 		} break;
-// 		case ast.Expression_TypeInitializer: {
-//
-// 		} break;
-// 		case ast.Expression_NumberLiteral: {
-//
-// 		} break;
-// 		case ast.Expression_StringLiteral: {
-//
-// 		} break;
-// 		case ast.Expression_FunctionDefinition: {
-//
-// 		} break;
-// 		case ast.Expression_ReturnStatement: {
-//
-// 		} break;
-// 		case ast.Expression_Continue: {
-//
-// 		} break;
-// 		case ast.Expression_Break: {
-//
-// 		} break;
-// 		default: {
-// 			assertNever(expr);
-// 		} break;
-// 	}
-// }

@@ -1,4 +1,4 @@
-import { deepEquals } from "./deep-equals";
+import { deepEquals } from "./deep-equals.ts";
 
 export type TestResult = {
 	name:   string;
@@ -19,8 +19,9 @@ export type TestGroup = {
 	subgroups: TestGroup[] | undefined;
 	tests:     TestResult[] | undefined;
 
-	_fails: number;
-	_checks:   number;
+	_fails:  number;
+	_checks: number;
+	_time:   number;
 }
 
 export type TestContext = {
@@ -106,20 +107,13 @@ function newTestGroup(name: string): TestGroup {
 		subgroups: undefined,
 		tests:     undefined,
 
-		_fails: 0,
-		_checks:   0,
+		_fails:  0,
+		_checks: 0,
+		_time:   0,
 	};
 }
 
-// _coveredSymbols allows us to quickly navigate to what we're trying to cover with a particular test.
-// It's more useful when the functionality you're covering is not being provided by the functions you call in the test itself.
-// Rather than typing the name via a string, inserting the symbol allows the LSP to automatically keep names in sync,
-// and notify us when those things get removed from the codebase.
-export function addTestGroup(
-	name: string,
-	_tryingToCover: unknown[],
-	registerFn: () => void
-) {
+function pushGroup(name: string) {
 	const subgroup = newTestGroup(name);
 
 	if (groups.length > 0) {
@@ -136,6 +130,18 @@ export function addTestGroup(
 	if (groups.length === 1) {
 		t.groups.push(subgroup);
 	}
+}
+
+// _coveredSymbols allows us to quickly navigate to what we're trying to cover with a particular test.
+// It's more useful when the functionality you're covering is not being provided by the functions you call in the test itself.
+// Rather than typing the name via a string, inserting the symbol allows the LSP to automatically keep names in sync,
+// and notify us when those things get removed from the codebase.
+export function addTestGroup(
+	name: string,
+	_tryingToCover: unknown[],
+	registerFn: () => void
+) {
+	pushGroup(name);
 
 	try {
 		registerFn();
@@ -149,13 +155,13 @@ export function addTestGroup(
 const t = newTestingContext();
 const groups: TestGroup[] = [];
 
-export function runAllTests(baseGroupName: string): TestContext {
-	const collectedGroups = t.groups;
-	const baseGroup = newTestGroup(baseGroupName);
-	baseGroup.subgroups = collectedGroups;
-	const groups = [baseGroup];
-	t.groups = groups;
-	const result = runAllTestsInternal(groups);
+export function setCurrentTestFile(name: string) {
+	groups.length = 0;
+	pushGroup(name);
+}
+
+export function runAllTests(): TestContext {
+	const result = runAllTestsInternal(t.groups);
 
 	const recomputeGroupAggregateStats = (g: TestGroup) => {
 		if (g.tests) {
@@ -164,6 +170,7 @@ export function runAllTests(baseGroupName: string): TestContext {
 					g._fails += test.fails.length;
 				}
 				g._checks += test.checks;
+				g._time   += test.time;
 			}
 		}
 		if (g.subgroups) {
@@ -171,11 +178,12 @@ export function runAllTests(baseGroupName: string): TestContext {
 				recomputeGroupAggregateStats(subgroup);
 				g._fails  += subgroup._fails;
 				g._checks += subgroup._checks;
+				g._time   += subgroup._time;
 			}
 		}
 	}
 
-	for (const g of groups) {
+	for (const g of t.groups) {
 		recomputeGroupAggregateStats(g);
 	}
 

@@ -1,19 +1,17 @@
-// @ts-expect-error trust me bro
-import "{{ModuleName}}";
 import { runAllTests, TestGroup } from "src/testing/testing";
+// @ts-expect-error trust me bro
+ALL_TESTS
 
-const name = "{{ModuleName}}";
-
-const results = runAllTests(name);
+const results = runAllTests();
 
 function printResults(g: TestGroup, depth: number, hidePasses: boolean) {
 	if (g._fails === 0) {
 		if (!hidePasses) {
-			console.log("  ".repeat(depth), "PASS (" + g._checks + ")", g.name);
+			console.log("  ".repeat(depth), "PASS (" + g._checks + ", " + Math.floor(g._time) + "ms)", g.name);
 		}
 		return;
 	} else {
-		console.log("  ".repeat(depth), "FAIL (" + g._fails + ")", g.name);
+		console.log("  ".repeat(depth), "FAIL (" + g._fails + ", " +  Math.floor(g._time) + "ms)", g.name);
 	}
 
 	if (g.subgroups) {
@@ -22,14 +20,13 @@ function printResults(g: TestGroup, depth: number, hidePasses: boolean) {
 		}
 	} else if (g.tests) {
 		for (const test of g.tests) {
-			console.log("  ".repeat(depth + 1), test.name, test.checks);
 			if (!test.fails) {
 				continue;
-			} else {
-				console.log("  ".repeat(depth + 1), test.name);
-				for (const fail of test.fails) {
-					console.log("  ".repeat(depth + 2), fail);
-				}
+			} 
+
+			console.log("  ".repeat(depth + 1), test.name);
+			for (const fail of test.fails) {
+				console.log("  ".repeat(depth + 2), fail);
 			}
 		}
 	}

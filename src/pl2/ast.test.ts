@@ -1,6 +1,8 @@
-import { addTest, addTestGroup, test, testAssert, testDeepEqual, testEqual } from "src/testing/testing";
+import { addTest, addTestGroup, setCurrentTestFile, test, testAssert, testDeepEqual, testEqual } from "src/testing/testing";
 import * as ast from "./ast";
 import { newParser } from "./parser";
+
+setCurrentTestFile("src/pl2/ast.test.ts");
 
 function isIdentifier(expr: ast.Expression | undefined, name: string): expr is ast.Identifier {
 	if (!expr) return false;

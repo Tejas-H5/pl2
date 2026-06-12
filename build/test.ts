@@ -9,38 +9,42 @@ const BASE_DIR = path.join(__dirname, "../");
 
 const testRunnerTemplate = await fs.readFile(path.join(BASE_DIR, "build", "test-runner.ts"), { encoding: "utf-8" });
 
+const entrypoints: string[] = [];
+
 for await (const file of fs.glob("**/*.test.ts", { cwd: BASE_DIR })) {
-	void processTestFile(file);
+	entrypoints.push(file);
 }
 
-async function processTestFile(filepath: string) {
-	await esbuild.build({
-		entryPoints: [filepath],
-		outdir: "idk",
-		bundle: true,
-		minify: false,
-		write: false,
-		stdin: {
-			// Can't believe this works!
-			// No reason why I can't put all the tests into a HTML file or something like that.
-			contents: testRunnerTemplate.replace(/\{\{ModuleName\}\}/g, filepath.split(path.sep).join("/")),
-			resolveDir: BASE_DIR,
-			loader: "ts",
+function filePathToImportPath(filepath: string): string {
+	return filepath.split(path.sep).join("/");
+}
+
+await esbuild.build({
+	outdir: "idk",
+	bundle: true,
+	minify: false,
+	write: false,
+	stdin: {
+		// Can't believe this works!
+		// No reason why I can't put all the tests into a HTML file or something like that.
+		contents: testRunnerTemplate.replace(/ALL_TESTS/g, entrypoints.map(e => {
+			const importPath = filePathToImportPath(e);
+			return `import "${importPath}";`
+		}).join("\n")),
+		resolveDir: BASE_DIR,
+		loader: "ts",
+	},
+	plugins: [{
+		name: "Run tests",
+		setup(build) {
+			build.onEnd((result) => {
+				if (!result.outputFiles) return;
+
+				runTests(result.outputFiles[0].text);
+			});
 		},
-		plugins: [{
-			name: "Run test " + filepath,
-			setup(build) {
-				build.onEnd((result) => {
-					if (!result.outputFiles) return;
-
-					for (const r of result.outputFiles) {
-						runTests(r.text);
-					}
-				});
-			},
-		}],
-	});
-}
+	}],
+});
 
 function runTests(bundledJavaScript: string) {
 	new Function(`${bundledJavaScript}`)();
