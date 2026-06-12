@@ -7,8 +7,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BASE_DIR = path.join(__dirname, "../");
 
-const NUM_WORKERS = 4;
-
 const testRunnerTemplate = await fs.readFile(path.join(BASE_DIR, "build", "test-runner.ts"), { encoding: "utf-8" });
 
 for await (const file of fs.glob("**/*.test.ts", { cwd: BASE_DIR })) {
@@ -16,7 +14,6 @@ for await (const file of fs.glob("**/*.test.ts", { cwd: BASE_DIR })) {
 }
 
 async function processTestFile(filepath: string) {
-	console.log("processing " + filepath);
 	await esbuild.build({
 		entryPoints: [filepath],
 		outdir: "idk",
@@ -26,7 +23,7 @@ async function processTestFile(filepath: string) {
 		stdin: {
 			// Can't believe this works!
 			// No reason why I can't put all the tests into a HTML file or something like that.
-			contents: testRunnerTemplate.replace("sideeffect", filepath.split(path.sep).join("/")),
+			contents: testRunnerTemplate.replace(/\{\{ModuleName\}\}/g, filepath.split(path.sep).join("/")),
 			resolveDir: BASE_DIR,
 			loader: "ts",
 		},

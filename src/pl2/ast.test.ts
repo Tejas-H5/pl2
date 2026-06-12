@@ -386,13 +386,6 @@ addTestGroup("Number parsing", [ast.parseNumberLiteral, ast.computeNumberForNumb
 	});
 });
 
-addTestGroup("String parsing", [ast.parseStringLiteral, ast.computeStringForStringLiteral], () => {
-	addTest("Normal string", r => {
-		const expr = ast.parseExpressionFromText(`"hi"`);
-		testAssert(r, expr?.type === ast.Expression_StringLiteral);
-		testEqual(r, expr.val, "hi")
-	});
-});
 
 addTestGroup("String parsing", [ast.parseStringLiteral, ast.computeStringForStringLiteral], () => {
 	addTest("Normal string", r => {

@@ -8,33 +8,38 @@ export type TestResult = {
 	// But this should be the fast path, so we're not literally logging a bunch of strings for passes.
 	checks: number; 
 	time: number;
+
+	fn: ((r: TestResult) => void);
+}
+
+export type TestGroup = {
+	name:	   string;
+
+	// Only one of the two will ever be set.
+	subgroups: TestGroup[] | undefined;
+	tests:     TestResult[] | undefined;
+
+	_fails: number;
+	_checks:   number;
 }
 
 export type TestContext = {
-	tests: TestResult[];
+	groups: TestGroup[];
 }
 
 export function newTestingContext(): TestContext {
 	return {
-		tests: [],
-	}
-}
-
-export function newTestResult(t: TestContext, name: string): TestResult {
-	const result: TestResult = {
-		name:   name,
-		fails:  undefined,
-		checks: 0,
-		time:   0,
+		groups: [],
 	};
-	t.tests.push(result);
-	return result;
 }
 
 export function test(r: TestResult, outcome: boolean, message = "no message"): boolean {
 	r.checks += 1;
 	if (!outcome) {
-		if (!message) message = "check " + r.checks;
+		if (!message) {
+			message = "check " + r.checks;
+		}
+
 		testFailure(r, "Test failed - " + message);
 	}
 	return outcome;
@@ -67,24 +72,43 @@ export function testDeepEqual(r: TestResult, a: unknown, b: unknown) {
 }
 
 export function testFailure(r: TestResult, message: string) {
-	if (!r.fails) r.fails = [];
+	if (!r.fails) {
+		r.fails = [];
+	}
+
 	r.fails.push(message);
 }
 
-export type TestFn = { name: string; group: string; fn: ((r: TestResult) => void) };
+export function addTest(name: string, fn: ((r: TestResult) => void)) {
+	const g = groups[groups.length - 1];
 
-const tests: TestFn[] = [];
-const groups: string[] = [];
-let currentGroup = "";
-
-export function addTest(
-	name: string,
-	fn: ((r: TestResult) => void)
-) {
-	if (groups.length === 0) {
-		throw new Error("All tests should be grouped under a group");
+	if (!g.tests) {
+		if (g.subgroups) {
+			throw new Error("Can't add tests AND groups to the same group");
+		}
+		g.tests = [];
 	}
-	tests.push({name, fn, group: currentGroup});
+
+	const test: TestResult = {
+		name,
+		fails: undefined,
+		checks: 0,
+		time: 0,
+		fn,
+	};
+
+	g.tests.push(test);
+}
+
+function newTestGroup(name: string): TestGroup {
+	return {
+		name:      name,
+		subgroups: undefined,
+		tests:     undefined,
+
+		_fails: 0,
+		_checks:   0,
+	};
 }
 
 // _coveredSymbols allows us to quickly navigate to what we're trying to cover with a particular test.
@@ -96,31 +120,86 @@ export function addTestGroup(
 	_tryingToCover: unknown[],
 	registerFn: () => void
 ) {
-	if (_tryingToCover.length === 0) {
-		throw new Error("Your test should cover something");
+	const subgroup = newTestGroup(name);
+
+	if (groups.length > 0) {
+		const currentGroup = groups[groups.length - 1];
+		if (!currentGroup.subgroups) {
+			if (currentGroup.tests) {
+				throw new Error("Can't add groups AND tests to the same group");
+			}
+			currentGroup.subgroups = [];
+		}
+		currentGroup.subgroups.push(subgroup);
+	}
+	groups.push(subgroup);
+	if (groups.length === 1) {
+		t.groups.push(subgroup);
 	}
 
-	groups.push(name);
-	currentGroup = groups.join(" :: ");
 	try {
 		registerFn();
+	} catch(e) {
+		throw e;
 	} finally {
 		groups.pop();
-		currentGroup = groups.join(" :: ");
 	}
 }
 
-export function runAllTests(): TestContext {
-	const t = newTestingContext();
-	for (const fn of tests) {
-		const t0 = performance.now();
-		const r = newTestResult(t, fn.group + " :: " + fn.name);
-		try {
-			fn.fn(r);
-		} catch(e) {
-			testFailure(r, "Runtime error: " + e);
+const t = newTestingContext();
+const groups: TestGroup[] = [];
+
+export function runAllTests(baseGroupName: string): TestContext {
+	const collectedGroups = t.groups;
+	const baseGroup = newTestGroup(baseGroupName);
+	baseGroup.subgroups = collectedGroups;
+	const groups = [baseGroup];
+	t.groups = groups;
+	const result = runAllTestsInternal(groups);
+
+	const recomputeGroupAggregateStats = (g: TestGroup) => {
+		if (g.tests) {
+			for (const test of g.tests) {
+				if (test.fails) {
+					g._fails += test.fails.length;
+				}
+				g._checks += test.checks;
+			}
 		}
-		r.time = performance.now() - t0;
+		if (g.subgroups) {
+			for (const subgroup of g.subgroups) {
+				recomputeGroupAggregateStats(subgroup);
+				g._fails  += subgroup._fails;
+				g._checks += subgroup._checks;
+			}
+		}
 	}
+
+	for (const g of groups) {
+		recomputeGroupAggregateStats(g);
+	}
+
+	return result;
+}
+
+function runAllTestsInternal(groups: TestGroup[]) {
+	for (const group of groups) {
+		if (group.tests) {
+			for (const test of group.tests) {
+				const t0 = performance.now();
+				try {
+					test.fn(test);
+				} catch(e) {
+					testFailure(test, "Runtime error: " + e);
+				}
+				test.time = performance.now() - t0;
+			}
+		}
+
+		if (group.subgroups) {
+			runAllTestsInternal(group.subgroups);
+		}
+	}
+
 	return t;
 }

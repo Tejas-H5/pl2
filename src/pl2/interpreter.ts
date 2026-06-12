@@ -1,4 +1,4 @@
-import { assert, assertNever } from "./assert";
+import { assertNever } from "./assert";
 import * as ast from "./ast";
 
 export const PROGRAM_OUTPUT_VARIABLE = 0;
