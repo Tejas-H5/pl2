@@ -479,5 +479,27 @@ addTestGroup("ast.parseProgram", [ast.parseProgram], () => {
 		const program = ast.parseProgramFromText(`x = y\ny = z`);
 		testEqual(r, program.statements.length, 2);
 	});
+
+	addTest("Multiple lines", r => {
+		const program = ast.parseProgramFromText(`
+			increment = fn(x) {
+				return(x + 1)
+			}
+			x = increment(2)
+`);
+
+		testEqual(r, program.statements.length, 2);
+		testAssert(r, program.statements[0].type === ast.Expression_BinaryExpression);
+		{
+			const fnDef = program.statements[0].rhs;
+			testAssert(r, fnDef.type === ast.Expression_FunctionDefinition);
+			testEqual(r, fnDef.args.length, 1);
+			testEqual(r, fnDef.args[0].name.name, "x");
+			testEqual(r, fnDef.body.length, 1);
+			testEqual(r, fnDef.body[0].type, ast.Expression_Return);
+		}
+
+		testAssert(r, program.statements[1].type === ast.Expression_BinaryExpression);
+	});
 });
 

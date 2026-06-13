@@ -32,6 +32,10 @@ export function interpretCode(code: string): ProgramIterator {
 	return result;
 }
 
+export function interpretCodeLines(lines: string[]): ProgramIterator {
+	return interpretCode(lines.join("\n"))
+}
+
 type ProgramIterator = {
 	program: ast.Program;
 	nextStatementIdx: number;
@@ -154,7 +158,7 @@ export type ResultNothing = {
 	type: typeof Result_Nothing;
 }
 
-type Result =
+export type Result =
  | ResultNumber
  | ResultString
  | ResultBoolean
@@ -174,8 +178,15 @@ export function newError(reason: string): EvaluateError {
 	}
 }
 
-export function invalidOperatorError(op: ast.BinaryOperator, lhs: Result, rhs: Result): EvaluateError {
-	return newError(`${ast.operatorToString(op.type)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`)
+export function newNumber(val: number): ResultNumber {
+	return {
+		type: Result_Number,
+		val: val,
+	};
+}
+
+export function invalidOperatorError(opType: ast.BinaryOperatorType, lhs: Result, rhs: Result): EvaluateError {
+	return newError(`${ast.operatorToString(opType)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`)
 }
 
 const NOTHING: Result = { type: Result_Nothing }
@@ -189,7 +200,7 @@ export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator):
 	switch (expr.type) {
 		case ast.Expression_Identifier:       return evaluateIdentifier(expr, iter);
 		case ast.Expression_BinaryExpression: return evaluateBinaryOperation(expr, iter);
-		case ast.Expression_FunctionCall:     return evaluateFunction(expr, iter);
+		case ast.Expression_FunctionCall:     return evaluateFunctionCall(expr, iter);
 		case ast.Expression_IfChain:          return evaluateIfChain(expr, iter); 
 		case ast.Expression_ForLoop:          return evaluateForLoop(expr, iter);
 		case ast.Expression_TypeInitializer:  return evaluateTypeInitializer(expr, iter);
@@ -202,6 +213,13 @@ export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator):
 		}
 		case ast.Expression_Continue: { return [NOTHING, null]; } break;
 		case ast.Expression_Break:    { return [NOTHING, null]; } break;
+		case ast.Expression_ReturnBlock: {
+			let result;
+			pushScope(iter, false); {
+				result = evaluateExpressionBlock(expr.block, iter);
+			} popScope(iter);
+			return result;
+		}
 		default: {
 			assertNever(expr);
 			return [NOTHING, newError("Could not evaluate expression")];
@@ -211,22 +229,55 @@ export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator):
 	return [NOTHING, newError("Could not evaluate expression")];
 }
 
-function evaluateFunction(fn: ast.FunctionCall, iter: ProgramIterator): [Result, EvaluateError] {
+export function evaluateCode(code: string, iter: ProgramIterator): [Result, EvaluateError] {
+	const expr = ast.parseExpressionFromText(code);
+	if (!expr) return [NOTHING, newError("Couldn't parse the expression")];
+	
+	return evaluateExpression(expr, iter);
+}
+
+function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator): [Result, EvaluateError] {
 	let result = NOTHING;
 	let error: EvaluateError = null;
 
 	pushScope(iter, false); {
-		const userFn = getVar(iter, fn.name.name);
-		if (userFn) {
-			if (userFn.type !== Result_Function) {
-				error = newError("Value was not a function - it was a " + typeToString(userFn.type));
-			} else {
-				[result, error] = evaluateExpressionBlock(userFn.val.body, iter);
-			}
-		}
+		[result, error] = evaluateFunctionCallInternal(fn, iter);
 	} popScope(iter);
 
 	return [result, error]
+}
+
+function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterator): [Result, EvaluateError] {
+	const functionName = fn.name.name;
+	const userFn = getVar(iter, functionName);
+	if (userFn) {
+		if (userFn.type !== Result_Function) return [NOTHING, newError("Value was not a function - it was a " + typeToString(userFn.type))];
+
+		const wantedNumArgs = userFn.val.args.length;
+		const gotNumArgs    = fn.arguments.length;
+		if (wantedNumArgs !== gotNumArgs) {
+			return [
+				NOTHING,
+				newError(`Wanted ${wantedNumArgs} arguments for function ${fn.name.name}, got ${gotNumArgs} arguments instead`)
+			];
+		}
+
+		for (let i = 0; i < userFn.val.args.length; i++) {
+			const argName = userFn.val.args[i].name.name;
+
+			// TODO: argument types, type validation
+
+			const argExpr = fn.arguments[i];
+			const [argVal, err] = evaluateExpression(argExpr, iter);
+			if (err) return [argVal, err];
+
+			setVar(iter, argName, argVal);
+		}
+
+		return evaluateExpressionBlock(userFn.val.body, iter);
+	}
+
+	return [NOTHING, newError(`Couldn't find function ${functionName} in this scope`)];
 }
 
 function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator): [Result, EvaluateError] {
@@ -285,34 +336,43 @@ function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, scope
 }
 
 function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterator): [Result, EvaluateError] {
-	const [lhs, err] = evaluateExpression(expr.lhs, iter);
-	if (err) return [lhs, err];
+	let value = NOTHING;
+	let err: EvaluateError = null;
 
-	const [rhs, err2] = evaluateExpression(expr.rhs, iter);
-	if (err2) return [rhs, err2];
+	[value, err] = evaluateExpression(expr.rhs, iter);
+	if (err) return [value, err];
 
+	if (expr.op.type !== ast.OP_NONE) {
+		const [lhs, err2] = evaluateExpression(expr.lhs, iter);
+		if (err2) return [lhs, err2];
+
+		let err: EvaluateError = null;
+		[value, err] = evaluateBinaryOperationOnResults(lhs, expr.op.type, value);
+		if (err) return [value, err];
+	}
+
+	if (expr.op.assignment) {
+		if (expr.lhs.type !== ast.Expression_Identifier) {
+			return [NOTHING, newError(`Can't assign to ${ast.expressionToString(expr)}`)];
+		}
+
+		setVar(iter, expr.lhs.name, value);
+		return [NOTHING, null];
+	} 
+
+	return [value, null];
+}
+
+function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperatorType, rhs: Result): [Result, EvaluateError] {
 	if (lhs.type === Result_Number && rhs.type === Result_Number) {
 		let value: ResultNumber = { type: Result_Number, val: 0 };
-		switch (expr.op.type) {
+		switch (exprOp) {
 			case ast.OP_ADD:      { value.val = lhs.val + rhs.val; } break;
 			case ast.OP_SUBTRACT: { value.val = lhs.val - rhs.val; } break;
 			case ast.OP_MULTIPLY: { value.val = lhs.val * rhs.val; } break;
 			case ast.OP_DIVIDE:   { value.val = lhs.val / rhs.val; } break;
 
-			default: return [NOTHING, invalidOperatorError(expr.op, lhs, rhs)]
-		}
-
-		if (expr.op.assignment === true) {
-			if (expr.lhs.type !== ast.Expression_Identifier) {
-				return [NOTHING, newError("Assignment operators only work if the left-hand-side is an identifer")];
-			}
-
-			setVar(iter, expr.lhs.name, value);
-
-			// Fairly important that assignment evaluates to nothing. The way the code here will work is
-			//  - If we have a value, then return it upwards
-			//  - Otherwise, it was either a) nothing or b) assigned into a variable
-			return [NOTHING, null];
+			default: return [NOTHING, invalidOperatorError(exprOp, lhs, rhs)]
 		}
 
 		return [value, null];
@@ -320,25 +380,15 @@ function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterat
 
 	if (lhs.type === Result_String && rhs.type === Result_String) {
 		const value: ResultString = { type: Result_String, val: "" };
-		switch (expr.op.type) {
-			case ast.OP_ADD:      { value.val = lhs.val + rhs.val; } break;
-			default: return [NOTHING, invalidOperatorError(expr.op, lhs, rhs)]
-		}
-
-		if (expr.op.assignment === true) {
-			if (expr.lhs.type !== ast.Expression_Identifier) {
-				return [NOTHING, newError("Assignment operators only work if the left-hand-side is an identifer")];
-			}
-
-			setVar(iter, expr.lhs.name, value);
-
-			return [NOTHING, null];
+		switch (exprOp) {
+			case ast.OP_ADD: { value.val = lhs.val + rhs.val; } break;
+			default: return [NOTHING, invalidOperatorError(exprOp, lhs, rhs)]
 		}
 
 		return [value, null]
 	}
 
-	return [NOTHING, newError(`Can't apply ${ast.operatorToString(expr.op.type)} between ${typeToString(lhs.type)} and ${typeToString(rhs.type)}`)];
+	return [NOTHING, newError(`Can't apply ${ast.operatorToString(exprOp)} between ${typeToString(lhs.type)} and ${typeToString(rhs.type)}`)];
 }
 
 function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator): [Result, EvaluateError] {

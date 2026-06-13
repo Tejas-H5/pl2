@@ -3,24 +3,43 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'url';
 
+// An attempt at a custom testing harness.
+// Usually, I'd just run all my tests via a HTML page, so that I can step through
+// them with the browser's dev-tools. But I'm trying to move away from relying
+// as heavily on the debugger. I suspect that the debugger may actually be slowing
+// me down, and not actually be as useful as I had once imagined. 
+// It's really handy in environments where I _can_ reach for them, but
+// there may be other debugging methods that are simpler that I'm missing out on,
+// which would take heavy advantage of the speed of recompilation.
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BASE_DIR = path.join(__dirname, "../");
 
+const config = process.argv[2];
+
+// TODO: filter which test cases we run as needed.
+// const filter = process.argv[3];
+
 const testRunnerTemplate = await fs.readFile(path.join(BASE_DIR, "build", "test-runner.ts"), { encoding: "utf-8" });
 
-const entrypoints: string[] = [];
-
-for await (const file of fs.glob("**/*.test.ts", { cwd: BASE_DIR })) {
+let entrypoints: string[] = [];
+for await (const file of fs.glob("**/*.test.ts", {
+	cwd: BASE_DIR,
+	exclude: filename => (filename === ".git" || filename === "node_modules")
+})) {
 	entrypoints.push(file);
+}
+
+function runTests(bundledJavaScript: string) {
+	new Function(`${bundledJavaScript}`)();
 }
 
 function filePathToImportPath(filepath: string): string {
 	return filepath.split(path.sep).join("/");
 }
 
-await esbuild.build({
-	outdir: "idk",
+const options: esbuild.BuildOptions = {
 	bundle: true,
 	minify: false,
 	write: false,
@@ -38,14 +57,26 @@ await esbuild.build({
 		name: "Run tests",
 		setup(build) {
 			build.onEnd((result) => {
-				if (!result.outputFiles) return;
+				if (!result.outputFiles) {
+					return;
+				}
+
+				const t0 = performance.now();
+				console.clear();
 
 				runTests(result.outputFiles[0].text);
+
+				if (config === "watch") {
+					console.log("Reran all tests in " + Math.floor(performance.now() - t0) + "ms");
+				}
 			});
 		},
 	}],
-});
+}
 
-function runTests(bundledJavaScript: string) {
-	new Function(`${bundledJavaScript}`)();
+if (config === "watch") {
+	const ctx = await esbuild.context(options);
+	await ctx.watch();
+} else {
+	await esbuild.build(options);
 }

@@ -49,25 +49,33 @@ export const Expression_FunctionDefinition = 9;
 export const Expression_Return             = 10;
 export const Expression_Continue           = 11;
 export const Expression_Break              = 12;
+export const Expression_ReturnBlock        = 13; // I have wanted this construct in every language I have ever used, but I've never seen it. :)
 
-export type ExpressionType =
- | typeof Expression_Invalid
- | typeof Expression_Identifier
- | typeof Expression_BinaryExpression
- | typeof Expression_FunctionCall
- | typeof Expression_ForLoop
- | typeof Expression_TypeInitializer
- | typeof Expression_NumberLiteral
- | typeof Expression_FunctionDefinition
- | typeof Expression_Return
- | typeof Expression_Continue
- | typeof Expression_Break
- ;
+export function expressionTypeToString(type: ExpressionType): string {
+	switch (type) {
+	case Expression_Identifier:         return "Identifier";
+	case Expression_BinaryExpression:   return "BinaryExpression";
+	case Expression_FunctionCall:       return "FunctionCall";
+	case Expression_IfChain:            return "IfChain";
+	case Expression_ForLoop:            return "ForLoop";
+	case Expression_TypeInitializer:    return "TypeInitializer";
+	case Expression_NumberLiteral:      return "NumberLiteral";
+	case Expression_StringLiteral:      return "StringLiteral";
+	case Expression_FunctionDefinition: return "FunctionDefinition";
+	case Expression_Return:             return "Return";
+	case Expression_Continue:           return "Continue";
+	case Expression_Break:              return "Break";
+	}
+	return "Invalid"
+}
+
+export type ExpressionType = Expression["type"];
 
 export type ExpressionBase = {
-	type: number;
-	start: TextPosition;
-	end:   TextPosition;
+	type:   number;
+	parser: Parser;
+	start:  TextPosition;
+	end:    TextPosition;
 }
 
 export type BinaryExpression = ExpressionBase & {
@@ -147,6 +155,11 @@ export type ReturnStatement = ExpressionBase & {
 	expr: Expression | undefined;
 }
 
+export type ReturnStatementBlock = ExpressionBase & {
+	type:  typeof Expression_ReturnBlock;
+	block: Expression[];
+}
+
 export type LoopControlFlowLabel = ExpressionBase &  {
 	type: 
 		| typeof Expression_Continue
@@ -184,10 +197,12 @@ export type Expression =
  | StringLiteral
  | FunctionDefinition
  | ReturnStatement
+ | ReturnStatementBlock
  | LoopControlFlowLabel
  ;
 
-export function expressionToString(text: string, expr: Expression): string {
+export function expressionToString(expr: Expression): string {
+	const text = expr.parser.text;
     return text.slice(expr.start.i, expr.end.i)
 }
 
@@ -239,10 +254,11 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
     const name = parser.text.slice(start.i, parser.pos.i);
 
     return {
+		parser: parser,
 		type: Expression_Identifier,
 		start: start,
 		end:   parserPos(parser),
-        name,
+		name,
     };
 }
 
@@ -381,6 +397,7 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 	}
 
 	return {
+		parser: parser,
 		type: Expression_IfChain,
 		start: start,
 		end:   parserPos(parser),
@@ -445,6 +462,7 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 	}
 
 	return {
+		parser: parser,
 		type: Expression_ForLoop,
 		start: pos,
 		end:   parserPos(parser),
@@ -461,6 +479,17 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 export function parseSingularExpression(parser: Parser): Expression | undefined {
 	parseWhitespace(parser);
 
+	// Most keywords here will be followed by a symbol or space.
+	// We need to do this to disambiguate them from a similarly named identifier, like returnPos or ifFound.
+	// Probably a bit scuffed of an approach but I also don't see anything wrong with it.
+	//
+	// E.g - you can't write code like
+	// return
+	// {
+	//		x = 1
+	// }
+	// but I don't really care
+
 	if (compareCurrent(parser, "("))    return parseGroup(parser);
 	if (compareCurrent(parser, "if "))  return parseIfChain(parser);
 	if (compareCurrent(parser, "for ")) return parseForLoop(parser)
@@ -471,6 +500,7 @@ export function parseSingularExpression(parser: Parser): Expression | undefined 
 		return undefined;
 	}
 	if (compareCurrent(parser, "return(")) return parseReturnStatement(parser);
+	if (compareCurrent(parser, "return{")) return parseReturnStatementBlock(parser);
 	if (canParseNumberLiteral(parser)) return parseNumberLiteral(parser);
 	if (currentChar(parser) === "\"")  return parseStringLiteral(parser);
 
@@ -528,8 +558,26 @@ export function parseReturnStatement(parser: Parser): ReturnStatement | undefine
 	advance(parser);
 
 	return {
+		parser: parser,
 		type: Expression_Return,
 		expr: expr,
+		start: pos,
+		end: parserPos(parser),
+	};
+}
+
+export function parseReturnStatementBlock(parser: Parser): ReturnStatementBlock | undefined {
+	const pos = parserPos(parser);
+
+	if (!compareCurrentAndAdvance(parser, "return")) return undefined;
+
+	const block = parseCodeBlock(parser);
+	if (!block) return undefined;
+
+	return {
+		parser: parser,
+		type: Expression_ReturnBlock,
+		block: block,
 		start: pos,
 		end: parserPos(parser),
 	};
@@ -558,6 +606,7 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 			}
 
 			expr = {
+				parser,
 				type: Expression_BinaryExpression,
 				start: lhs.start,
 				end: rhs.end,
@@ -592,6 +641,7 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 
 		// (lhs recursive thing) <op> rhs
 		expr = {
+				parser,
 			type: Expression_BinaryExpression,
 			start: expr.start,
 			end: rhs.end,
@@ -680,6 +730,7 @@ export function parseFunctionCall(parser: Parser, functionName: Identifier): Fun
 	}
 
 	return {
+		parser: parser,
 		type: Expression_FunctionCall,
 		start: functionName.start,
 		end:   parserPos(parser),
@@ -723,6 +774,7 @@ export function parseTypeInitializer(
 	}
 
 	return {
+		parser: parser,
 		type: Expression_TypeInitializer,
 		start: pos,
 		end:   parserPos(parser),
@@ -779,6 +831,7 @@ export function parseNumberLiteral(parser: Parser): NumberLiteral | undefined {
     const integerPart = parser.text.slice(intStart, parser.pos.i);
 
     const result: NumberLiteral = {
+		parser: parser,
         type: Expression_NumberLiteral,
 		start: pos,
 		end:   parserPos(parser),
@@ -896,15 +949,14 @@ export function parseStringLiteral(parser: Parser): StringLiteral | undefined {
     }
 
     const result: StringLiteral = {
+		parser: parser,
 		type: Expression_StringLiteral,
         start: startPos,
         end: parserPos(parser),
         val: "",
     };
 
-    const [val, error] = computeStringForStringLiteral(
-        expressionToString(parser.text, result)
-    );
+    const [val, error] = computeStringForStringLiteral(expressionToString(result));
     if (val === undefined) {
         // TODO: addErrorAtCurrentPosition(parser, error);
         return;
@@ -1016,6 +1068,7 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 	}
 
 	return {
+		parser: parser,
 		type: Expression_FunctionDefinition,
 		start: pos,
 		end: parserPos(parser),
