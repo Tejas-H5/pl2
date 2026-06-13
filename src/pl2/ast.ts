@@ -4,6 +4,7 @@ import { isDigit, isLetter, isWhitespace } from "./string-utils";
 import { TextPosition } from "./text-pos";
 
 export type Program = {
+	code: string;
 	statements: Expression[];
 }
 
@@ -112,7 +113,6 @@ export type ExpressionType = Expression["type"];
 
 export type ExpressionBase = {
 	type:   number;
-	parser: Parser;
 	start:  TextPosition;
 	end:    TextPosition;
 }
@@ -246,9 +246,8 @@ export type Expression =
  | LoopControlFlowLabel
  ;
 
-export function expressionToString(expr: Expression): string {
-	const text = expr.parser.text;
-    return text.slice(expr.start.i, expr.end.i)
+export function expressionToString(code: string, expr: Expression): string {
+    return code.slice(expr.start.i, expr.end.i)
 }
 
 export function isAllowedIdentifierSymbol(char: string) {
@@ -299,7 +298,6 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
     const name = parser.text.slice(start.i, parser.pos.i);
 
     return {
-		parser: parser,
 		type: Expression_Identifier,
 		start: start,
 		end:   parserPos(parser),
@@ -469,7 +467,6 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 	}
 
 	return {
-		parser: parser,
 		type: Expression_IfChain,
 		start: start,
 		end:   parserPos(parser),
@@ -534,7 +531,6 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 	}
 
 	return {
-		parser: parser,
 		type: Expression_ForLoop,
 		start: pos,
 		end:   parserPos(parser),
@@ -625,7 +621,6 @@ export function parseReturnStatementInternal(parser: Parser): ReturnStatement | 
 	advance(parser);
 
 	return {
-		parser: parser,
 		type: Expression_Return,
 		expr: expr,
 		start: pos,
@@ -640,7 +635,6 @@ export function parseReturnStatementBlockInternal(parser: Parser): ReturnStateme
 	if (!block) return undefined;
 
 	return {
-		parser: parser,
 		type: Expression_ReturnBlock,
 		block: block,
 		start: pos,
@@ -683,7 +677,6 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 			}
 
 			expr = {
-				parser,
 				type: Expression_BinaryExpression,
 				start: lhs.start,
 				end: rhs.end,
@@ -718,7 +711,6 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 
 		// (lhs recursive thing) <op> rhs
 		expr = {
-				parser,
 			type: Expression_BinaryExpression,
 			start: expr.start,
 			end: rhs.end,
@@ -825,10 +817,9 @@ export function parseFunctionCall(parser: Parser, functionName: Identifier): Fun
 	}
 
 	return {
-		parser: parser,
 		type: Expression_FunctionCall,
 		start: functionName.start,
-		end:   parserPos(parser),
+		end:  parserPos(parser),
 		name: functionName,
 		arguments: args,
 	};
@@ -869,7 +860,6 @@ export function parseTypeInitializer(
 	}
 
 	return {
-		parser: parser,
 		type: Expression_TypeInitializer,
 		start: pos,
 		end:   parserPos(parser),
@@ -926,7 +916,6 @@ export function parseNumberLiteral(parser: Parser): NumberLiteral | undefined {
     const integerPart = parser.text.slice(intStart, parser.pos.i);
 
     const result: NumberLiteral = {
-		parser: parser,
         type: Expression_NumberLiteral,
 		start: pos,
 		end:   parserPos(parser),
@@ -989,7 +978,6 @@ export function parseBooleanLiteral(parser: Parser, val: boolean): BooleanLitera
 	}
 
     return {
-		parser: parser,
         type: Expression_BooleanLiteral,
 		start: pos,
 		end:   parserPos(parser),
@@ -1062,14 +1050,13 @@ export function parseStringLiteral(parser: Parser): StringLiteral | undefined {
     }
 
     const result: StringLiteral = {
-		parser: parser,
 		type: Expression_StringLiteral,
         start: startPos,
         end: parserPos(parser),
         val: "",
     };
 
-    const [val, error] = computeStringForStringLiteral(expressionToString(result));
+    const [val, error] = computeStringForStringLiteral(expressionToString(parser.text, result));
     if (val === undefined) {
         // TODO: addErrorAtCurrentPosition(parser, error);
         return;
@@ -1182,7 +1169,6 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 	}
 
 	return {
-		parser: parser,
 		type: Expression_FunctionDefinition,
 		start: pos,
 		end: parserPos(parser),
@@ -1193,6 +1179,7 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 
 export function parseProgram(parser: Parser): Program {
 	const program: Program = {
+		code: parser.text,
 		statements: [],
 	};
 

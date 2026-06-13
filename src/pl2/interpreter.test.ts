@@ -242,6 +242,17 @@ addTestGroup("User functions", [], () => {
 	});
 });
 
+addTestGroup("Builtin functions", [], () => {
+	addTest("print", r => {
+		const result = pl2.interpretCode(`
+			print(1 + 1)
+		`);
+
+		testEqual(r, result.logs.length, 1);
+		testEqual(r, result.logs[0].text, "2");
+	});
+});
+
 addTestGroup("If statements", [], () => {
 	const tests = [
 		{ 
@@ -337,4 +348,55 @@ addTestGroup("If statements", [], () => {
 		testEqual(r, err, null);
 		testEqualResult(r, x, pl2.newNumber(1));
 	});
+});
+
+addTestGroup("For-Loops", [], () => {
+	const tests = [
+		{
+			name: "range ..<",
+			code: `
+				x = 0
+				for i in 0..<10 {
+					x += 1
+				}
+			`,
+			expected: 10,
+		}, {
+			name: "range ..<=",
+			code: `
+				x = 0
+				for i in 0..<=10 {
+					x += 1
+				}
+			`,
+			expected: 11,
+		}, {
+			name: "range ..>",
+			code: `
+				x = 0
+				for i in 10..>0 {
+					x += 1
+				}
+			`,
+			expected: 10,
+		}, {
+			name: "range ..>=",
+			code: `
+				x = 0
+				for i in 10..>=0 {
+					x += 1
+				}
+			`,
+			expected: 11,
+		}
+	];
+
+	for (const test of tests) {
+		addTest(test.name, r => {
+			const result = pl2.interpretCode(test.code);
+			const [x, err] = pl2.evaluateCode("x", result);
+			testEqual(r, err, null);
+			testEqualResult(r, x, pl2.newNumber(test.expected));
+		})
+	}
 });

@@ -1,9 +1,7 @@
 import { assertNever } from "./assert";
 import * as ast from "./ast";
+import { getBuiltinFn } from "./builtins";
 import { newParser } from "./parser";
-
-export type ProgramValue = {
-}
 
 export function interpretProgram(program: ast.Program): ProgramIterator {
 	const iter = newProgramIterator(program);
@@ -36,23 +34,29 @@ export function interpretCodeLines(lines: string[]): ProgramIterator {
 	return interpretCode(lines.join("\n"))
 }
 
-type ProgramIterator = {
+export type ProgramIterator = {
 	program: ast.Program;
 	nextStatementIdx: number;
 
 	stack:  ast.Expression[];
 	scopes: Scope[];
+
+	logs: LogEntry[];
 }
 
-type Scope = {
+export type LogEntry = {
+	expr: ast.Expression;
+	text: string;
+}
+
+export type Scope = {
 	vars: Map<string, Result>;
 	flags: number;
 }
 
-const SCOPE_ALLOW_CONTINUE_BREAK = 1 << 0;
-const SCOPE_ISOLATED             = 1 << 1;
-
-const SCOPE_NON_ISOLATED_FLAGS = SCOPE_ALLOW_CONTINUE_BREAK;
+export const SCOPE_ALLOW_CONTINUE_BREAK = 1 << 0;
+export const SCOPE_ISOLATED             = 1 << 1;
+export const SCOPE_NON_ISOLATED_FLAGS = SCOPE_ALLOW_CONTINUE_BREAK;
 
 export function newProgramIterator(program: ast.Program): ProgramIterator {
 	return {
@@ -60,6 +64,7 @@ export function newProgramIterator(program: ast.Program): ProgramIterator {
 		nextStatementIdx: 0,
 		stack: [],
 		scopes: [],
+		logs: [],
 	};
 }
 
@@ -172,7 +177,7 @@ export type ResultList = {
 
 export type ResultMap = {
 	type: typeof Result_Map;
-	val: Map<number, Result>;
+	val: Map<number, { key: Result, val: Result }>;
 }
 
 export type ResultNothing = {
@@ -189,7 +194,7 @@ export type Result =
  | ResultMap
  ;
 
-type EvaluateError = {
+export type EvaluateError = {
 	reason: string;
 } | null;
 
@@ -217,9 +222,9 @@ export function invalidOperatorError(opType: ast.BinaryOperatorType, lhs: Result
 	return newError(`${ast.operatorToString(opType)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`)
 }
 
-const NOTHING: Result = { type: Result_Nothing }
-const BREAK: Result = { type: Result_Nothing }
-const CONTINUE: Result = { type: Result_Nothing }
+export const NOTHING: Result = { type: Result_Nothing }
+export const BREAK: Result = { type: Result_Nothing }
+export const CONTINUE: Result = { type: Result_Nothing }
 
 
 // TODO: Don't end up with this - we need an alternative formulation that lets us step through the program.
@@ -278,6 +283,13 @@ function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator): [Res
 
 function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterator): [Result, EvaluateError] {
 	const functionName = fn.name.name;
+
+	// Users probably shouldn't be able to override builtin functions.
+	const builtinFn = getBuiltinFn(fn.name.name);
+	if (builtinFn) {
+		return builtinFn(fn, iter);
+	}
+
 	const userFn = getVar(iter, functionName);
 	if (userFn) {
 		if (userFn.type !== Result_Function) return [NOTHING, newError("Value was not a function - it was a " + typeToString(userFn.type))];
@@ -378,7 +390,7 @@ function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterat
 
 	if (expr.op.assignment) {
 		if (expr.lhs.type !== ast.Expression_Identifier) {
-			return [NOTHING, newError(`Can't assign to ${ast.expressionToString(expr)}`)];
+			return [NOTHING, newError(`Can't assign to ${ast.expressionToString(iter.program.code, expr)}`)];
 		}
 
 		setVar(iter, expr.lhs.name, value);
@@ -524,7 +536,13 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 				const [val, valErr] = evaluateExpression(arg.rhs, iter);
 				if (valErr) return [val, valErr];
 
-				result.val.set(getKey(key), val);
+				const mapKey = getMapKey(key)
+				let slot = result.val.get(mapKey);
+				if (!slot) {
+					slot = { key, val };
+					result.val.set(mapKey, slot);
+				}
+				slot.val = val;
 			}
 			return [result, null];
 		} break;
@@ -544,11 +562,26 @@ export function isHashable(result: Result): boolean {
 	return false;
 }
 
-export function getKey(result: Result): any {
+export function getMapKey(result: Result): any {
 	switch (result.type) {
 		case Result_Nothing:  return NOTHING;
 		case Result_Number:   return result.val;
 		case Result_String:   return result.val;
 		case Result_Boolean:  return result.val;
 	}
+}
+
+export function resultToString(result: Result): string {
+	switch (result.type) {
+		case Result_Nothing:  return "<nothing>";
+		case Result_Number:   return "" + result.val;
+		case Result_String:   return result.val;
+		case Result_Boolean:  return "" + result.val;
+		// TODO: consider making it possible to know the name of the function when we do <ident> = fn() {...}
+		case Result_Function: return "fn (" + result.val.args.map(a => a.name).join(", ") + ")"; 
+		case Result_List:     return "list[" + result.val.map(resultToString).join(", ") + "]";
+		case Result_Map:      return "map[" + [...result.val.values()].map((e) => resultToString(e.key) + " -> " + resultToString(e.val)).join(", ") + "]";
+		default: assertNever(result);
+	}
+	return "unknown string representation";
 }

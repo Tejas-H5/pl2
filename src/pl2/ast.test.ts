@@ -539,3 +539,20 @@ addTestGroup("ast.parseProgram", [ast.parseProgram], () => {
 	});
 });
 
+addTestGroup("Common conflicts", [], () => {
+	addTest("Identifiers", r => {
+		const identifiers = [
+			"ifFound",
+			"forThing",
+			"elseUsed",
+			"fnName",
+			"listOne",
+			"mapOne",
+		];
+
+		for (const ident of identifiers) {
+			const result = ast.parseExpressionFromText(ident);
+			testEqual(r, result?.type, ast.Expression_Identifier, ident);
+		}
+	});
+});
