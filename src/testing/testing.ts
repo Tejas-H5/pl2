@@ -37,7 +37,7 @@ export function newTestingContext(): TestContext {
 	};
 }
 
-export function test(r: TestResult, outcome: boolean, message: string = ""): boolean {
+export function test(r: TestResult, outcome: boolean, message = ""): boolean {
 	r.checks += 1;
 	if (!outcome) {
 		if (!message) {
@@ -49,8 +49,8 @@ export function test(r: TestResult, outcome: boolean, message: string = ""): boo
 	return outcome;
 }
 
-export function testEqual(r: TestResult, a: unknown, b: unknown): boolean {
-	if (!test(r, a === b)) {
+export function testEqual(r: TestResult, a: unknown, b: unknown, message = ""): boolean {
+	if (!test(r, a === b, message)) {
 		testFailure(r, `    got: ${JSON.stringify(a)}, wanted: ${JSON.stringify(b)}`);
 		return false;
 	}

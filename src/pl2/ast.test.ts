@@ -132,7 +132,7 @@ addTestGroup("For loops", [ast.parseForLoop], () => {
 	});
 })
 
-addTestGroup("Return statement", [ast.parseReturnStatement], () => {
+addTestGroup("Return statement", [ast.parseAnyReturnStatement], () => {
 	addTest("None", r => {
 		const expr = ast.parseExpressionFromText("return()");
 		testAssert(r, expr?.type === ast.Expression_Return);
@@ -143,6 +143,42 @@ addTestGroup("Return statement", [ast.parseReturnStatement], () => {
 		const expr = ast.parseExpressionFromText("return(a)");
 		testAssert(r, expr?.type === ast.Expression_Return);
 		test(r, isIdentifier(expr.expr!, "a"))
+	});
+
+	addTest("With whitespace", r => {
+		const expr = ast.parseExpressionFromText(`return
+        (
+			a
+        )`);
+		testAssert(r, expr?.type === ast.Expression_Return);
+		test(r, isIdentifier(expr.expr!, "a"))
+	});
+});
+
+addTestGroup("Return statement block", [ast.parseAnyReturnStatement], () => {
+	addTest("None", r => {
+		const expr = ast.parseExpressionFromText("return{}");
+		testAssert(r, expr?.type === ast.Expression_ReturnBlock);
+		testEqual(r, expr.block.length, 0)
+	});
+
+	addTest("Normal", r => {
+		const expr = ast.parseExpressionFromText(`return{
+			x = 1
+			return(x)
+		}`);
+		testAssert(r, expr?.type === ast.Expression_ReturnBlock);
+		testEqual(r, expr.block.length, 2)
+	});
+
+	addTest("Normal", r => {
+		const expr = ast.parseExpressionFromText(`return
+        {
+			x = 1
+			return(x)
+		}`);
+		testAssert(r, expr?.type === ast.Expression_ReturnBlock);
+		testEqual(r, expr.block.length, 2)
 	});
 });
 

@@ -1,5 +1,5 @@
-import { assert } from "./assert";
-import {advance, advanceBy, advanceToNextNewLine, compareCurrent, currentChar, newParser, Parser, parserPos, reachedEnd } from "./parser";
+import { assert, assertNever } from "./assert";
+import {advance, advanceBy, advanceToNextNewLine, compareCurrent, compareCurrentWithWordBoundary, currentChar, newParser, Parser, parserPos, reachedEnd } from "./parser";
 import { isDigit, isLetter, isWhitespace } from "./string-utils";
 import { TextPosition } from "./text-pos";
 
@@ -7,11 +7,23 @@ export type Program = {
 	statements: Expression[];
 }
 
-export const OP_NONE     = 0;
-export const OP_ADD      = 1;
-export const OP_SUBTRACT = 2;
-export const OP_MULTIPLY = 3;
-export const OP_DIVIDE   = 4;
+export const OP_NONE        = 0;
+export const OP_ADD         = 1;
+export const OP_SUBTRACT    = 2;
+export const OP_MULTIPLY    = 3;
+export const OP_DIVIDE      = 4;
+export const OP_LOGICAL_AND = 5;
+export const OP_BITWISE_AND = 6;
+export const OP_LOGICAL_OR  = 7;
+export const OP_BITWISE_OR  = 8;
+export const OP_LOGICAL_XOR = 9;
+export const OP_BITWISE_XOR = 10;
+export const OP_LESS_THAN       = 11;
+export const OP_LESS_THAN_EQ    = 12;
+export const OP_GREATER_THAN    = 13;
+export const OP_GREATER_THAN_EQ = 14;
+export const OP_EQ              = 15;
+export const OP_NOT_EQ          = 16;
 
 export type BinaryOperatorType =
  | typeof OP_NONE
@@ -19,14 +31,40 @@ export type BinaryOperatorType =
  | typeof OP_SUBTRACT
  | typeof OP_MULTIPLY
  | typeof OP_DIVIDE
+ | typeof OP_LOGICAL_AND
+ | typeof OP_BITWISE_AND
+ | typeof OP_LOGICAL_OR
+ | typeof OP_BITWISE_OR
+ | typeof OP_LOGICAL_XOR
+ | typeof OP_BITWISE_XOR
+ | typeof OP_LESS_THAN
+ | typeof OP_LESS_THAN_EQ
+ | typeof OP_GREATER_THAN
+ | typeof OP_GREATER_THAN_EQ
+ | typeof OP_EQ
+ | typeof OP_NOT_EQ
  ;
 
-export function operatorToString(op: number): string {
+export function operatorToString(op: BinaryOperatorType): string {
 	switch(op) {
-		case OP_ADD:      return "+";
-		case OP_SUBTRACT: return "-";
-		case OP_MULTIPLY: return "*";
-		case OP_DIVIDE:   return "/";
+		case OP_NONE:        return "<no operator>";
+		case OP_ADD:         return "+";
+		case OP_SUBTRACT:    return "-";
+		case OP_MULTIPLY:    return "*";
+		case OP_DIVIDE:      return "/";
+		case OP_LOGICAL_AND: return "&&";
+		case OP_BITWISE_AND: return "&";
+		case OP_LOGICAL_OR:  return "||";
+		case OP_BITWISE_OR:  return "|";
+		case OP_LOGICAL_XOR: return "^^";
+		case OP_BITWISE_XOR: return "|";
+		case OP_LESS_THAN:       return "<";
+		case OP_LESS_THAN_EQ:    return "<=";
+		case OP_GREATER_THAN:    return ">";
+		case OP_GREATER_THAN_EQ: return ">=";
+		case OP_EQ:              return "=="; // Look out for conflicts with the = operator !
+		case OP_NOT_EQ:          return "!="; // Look out for conflicts with the ! operator !
+		default: assertNever(op);
 	}
 	return "?";
 }
@@ -50,6 +88,7 @@ export const Expression_Return             = 10;
 export const Expression_Continue           = 11;
 export const Expression_Break              = 12;
 export const Expression_ReturnBlock        = 13; // I have wanted this construct in every language I have ever used, but I've never seen it. :)
+export const Expression_BooleanLiteral     = 14;
 
 export function expressionTypeToString(type: ExpressionType): string {
 	switch (type) {
@@ -135,6 +174,11 @@ export type NumberLiteral = ExpressionBase & {
     val: number;
 }
 
+export type BooleanLiteral = ExpressionBase & {
+    type: typeof Expression_BooleanLiteral;
+	val: boolean;
+};
+
 export type FunctionArgument = {
 	name: Identifier;
 	// TODO: type: TypeExpression. I was originally thinking of just leaving everything untyped.
@@ -194,6 +238,7 @@ export type Expression =
  | ForLoop
  | TypeInitializer
  | NumberLiteral
+ | BooleanLiteral
  | StringLiteral
  | FunctionDefinition
  | ReturnStatement
@@ -263,11 +308,35 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
 }
 
 export function parseOperatorInternal(parser: Parser): BinaryOperatorType {
-	if (compareCurrent(parser, "+")) { advanceBy(parser, 1); return OP_ADD; }
-	if (compareCurrent(parser, "-")) { advanceBy(parser, 1); return OP_SUBTRACT; }
-	if (compareCurrent(parser, "*")) { advanceBy(parser, 1); return OP_MULTIPLY; }
-	if (compareCurrent(parser, "/")) { advanceBy(parser, 1); return OP_DIVIDE; }
+	if (compareCurrent(parser, "+"))  { advanceBy(parser, 1); return OP_ADD; }
+	if (compareCurrent(parser, "-"))  { advanceBy(parser, 1); return OP_SUBTRACT; }
+	if (compareCurrent(parser, "*"))  { advanceBy(parser, 1); return OP_MULTIPLY; }
+	if (compareCurrent(parser, "/"))  { advanceBy(parser, 1); return OP_DIVIDE; }
+	if (compareCurrent(parser, "&&")) { advanceBy(parser, 2); return OP_LOGICAL_AND; }
+	if (compareCurrent(parser, "&"))  { advanceBy(parser, 1); return OP_BITWISE_AND; }
+	if (compareCurrent(parser, "||")) { advanceBy(parser, 2); return OP_LOGICAL_OR; }
+	if (compareCurrent(parser, "|"))  { advanceBy(parser, 1); return OP_BITWISE_OR; }
+	if (compareCurrent(parser, "^^")) { advanceBy(parser, 2); return OP_LOGICAL_XOR; }
+	if (compareCurrent(parser, "^"))  { advanceBy(parser, 1); return OP_BITWISE_XOR; }
+	if (compareCurrent(parser, "<=")) { advanceBy(parser, 2); return OP_LESS_THAN_EQ; }
+	if (compareCurrent(parser, "<"))  { advanceBy(parser, 1); return OP_LESS_THAN; }
+	if (compareCurrent(parser, ">=")) { advanceBy(parser, 2); return OP_GREATER_THAN_EQ; }
+	if (compareCurrent(parser, ">"))  { advanceBy(parser, 1); return OP_GREATER_THAN; }
+	if (compareCurrent(parser, "==")) { advanceBy(parser, 2); return OP_EQ; }
+	if (compareCurrent(parser, "!=")) { advanceBy(parser, 2); return OP_NOT_EQ; }
 	return OP_NONE;
+}
+
+function operatorCanBeCombinedWithAssignment(op: BinaryOperatorType): boolean {
+	switch (op) {
+		case OP_LESS_THAN_EQ:    return false; 
+		case OP_LESS_THAN:       return false; 
+		case OP_GREATER_THAN_EQ: return false; 
+		case OP_GREATER_THAN:    return false; 
+		case OP_EQ:              return false; 
+		case OP_NOT_EQ:          return false; 
+	}
+	return true;
 }
 
 export function parseOperator(parser: Parser): BinaryOperator | undefined {
@@ -276,9 +345,11 @@ export function parseOperator(parser: Parser): BinaryOperator | undefined {
 	const op = parseOperatorInternal(parser);
 
 	let assignment = false;
-	if (currentChar(parser) === "=") {
-		assignment = true;
-		if (!advance(parser)) return;
+	if (operatorCanBeCombinedWithAssignment(op)) {
+		if (currentChar(parser) === "=") {
+			assignment = true;
+			if (!advance(parser)) return;
+		}
 	}
 
 	if (op === 0 && !assignment) return undefined;
@@ -317,12 +388,14 @@ function compareCurrentAndAdvance(parser: Parser, keyword: string): boolean {
 	return true;
 }
 
-function parseCodeBlock(parser: Parser): Expression[] | undefined {
-	if (currentChar(parser) !== "{") {
-		// TODO: report error 
-		return undefined;
+function parseCodeBlock(parser: Parser, pastFirstCurlyBrace = false): Expression[] | undefined {
+	if (!pastFirstCurlyBrace) {
+		if (currentChar(parser) !== "{") {
+			// TODO: report error 
+			return undefined;
+		}
+		advance(parser);
 	}
-	advance(parser);
 
 	const statements: Expression[] = [];
 	let foundBlockEnd = false;
@@ -350,8 +423,7 @@ function parseCodeBlock(parser: Parser): Expression[] | undefined {
 }
 
 export function parseIfChain(parser: Parser): IfChain | undefined {
-	if (!compareCurrentAndAdvance(parser, "if ")) return;
-
+	if (!compareCurrentAndAdvance(parser, "if")) return;
 	parseWhitespace(parser);
 
 	const start = parserPos(parser);
@@ -409,7 +481,7 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 export function parseForLoop(parser: Parser): ForLoop | undefined {
 	const pos = parserPos(parser);
 
-	if (!compareCurrentAndAdvance(parser, "for ")) return;
+	if (!compareCurrentAndAdvance(parser, "for")) return;
 
 	parseWhitespace(parser)
 	const varName = parseIdentifier(parser);
@@ -490,19 +562,16 @@ export function parseSingularExpression(parser: Parser): Expression | undefined 
 	// }
 	// but I don't really care
 
-	if (compareCurrent(parser, "("))    return parseGroup(parser);
-	if (compareCurrent(parser, "if "))  return parseIfChain(parser);
-	if (compareCurrent(parser, "for ")) return parseForLoop(parser)
-	if (compareCurrent(parser, "fn("))  return parseFunctionDefinition(parser)
+	if (compareCurrent(parser, "(")) { return parseGroup(parser); }
+	if (compareCurrentWithWordBoundary(parser, "fn")) { return parseFunctionDefinition(parser) }
+	if (compareCurrentWithWordBoundary(parser, "if")) { return parseIfChain(parser); }
+	if (compareCurrentWithWordBoundary(parser, "for")) { return parseForLoop(parser) }
+	if (compareCurrentWithWordBoundary(parser, "return")) { return parseAnyReturnStatement(parser); }
 
-	if (compareCurrentAndAdvance(parser, "return ")) {
-		// TODO: error reporting. return is like return() here. I couldn't figure out how else to make it work without semicolons.
-		return undefined;
-	}
-	if (compareCurrent(parser, "return(")) return parseReturnStatement(parser);
-	if (compareCurrent(parser, "return{")) return parseReturnStatementBlock(parser);
-	if (canParseNumberLiteral(parser)) return parseNumberLiteral(parser);
-	if (currentChar(parser) === "\"")  return parseStringLiteral(parser);
+	if (compareCurrentWithWordBoundary(parser, "true"))  { return parseBooleanLiteral(parser, true); }
+	if (compareCurrentWithWordBoundary(parser, "false")) { return parseBooleanLiteral(parser, false); }
+	if (canParseNumberLiteral(parser))                  { return parseNumberLiteral(parser); }
+	if (currentChar(parser) === "\"")                   { return parseStringLiteral(parser); }
 
 	// Identifier, or function, or data initializer. Do this _after_ keywords.
 	if (isLetter(currentChar(parser))) {
@@ -539,9 +608,7 @@ export function parseSingularExpression(parser: Parser): Expression | undefined 
 	return undefined;
 }
 
-export function parseReturnStatement(parser: Parser): ReturnStatement | undefined {
-	if (!compareCurrentAndAdvance(parser, "return(")) return undefined;
-
+export function parseReturnStatementInternal(parser: Parser): ReturnStatement | undefined {
 	parseWhitespace(parser);
 
 	const pos = parserPos(parser);
@@ -566,12 +633,10 @@ export function parseReturnStatement(parser: Parser): ReturnStatement | undefine
 	};
 }
 
-export function parseReturnStatementBlock(parser: Parser): ReturnStatementBlock | undefined {
+export function parseReturnStatementBlockInternal(parser: Parser): ReturnStatementBlock | undefined {
 	const pos = parserPos(parser);
 
-	if (!compareCurrentAndAdvance(parser, "return")) return undefined;
-
-	const block = parseCodeBlock(parser);
+	const block = parseCodeBlock(parser, true);
 	if (!block) return undefined;
 
 	return {
@@ -581,6 +646,18 @@ export function parseReturnStatementBlock(parser: Parser): ReturnStatementBlock 
 		start: pos,
 		end: parserPos(parser),
 	};
+}
+
+export function parseAnyReturnStatement(parser: Parser): ReturnStatement | ReturnStatementBlock | undefined {
+	if (!compareCurrentAndAdvance(parser, "return")) return undefined;
+	parseWhitespace(parser);
+	if (compareCurrentAndAdvance(parser, "(")) {
+		return parseReturnStatementInternal(parser);
+	}
+	if (compareCurrentAndAdvance(parser, "{")) {
+		return parseReturnStatementBlockInternal(parser);
+	}
+	return undefined;
 }
 
 export function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, op: BinaryOperator | undefined): BinaryExpression | undefined {
@@ -680,12 +757,30 @@ export function getOpLevel(op: BinaryOperatorType): number {
 	// The concept is the same as precedence, but it's easier to think about imo.
 
     switch (op) {
-		case OP_ADD:      return 1;
-		case OP_SUBTRACT: return 1;
-		case OP_MULTIPLY: return 2;
-		case OP_DIVIDE:   return 2;
+		case OP_NONE:            return 0;
+
+		case OP_LESS_THAN:       return 1;
+		case OP_LESS_THAN_EQ:    return 1;
+		case OP_GREATER_THAN:    return 1;
+		case OP_GREATER_THAN_EQ: return 1;
+		case OP_EQ:              return 1;
+		case OP_NOT_EQ:          return 1;
+
+		case OP_LOGICAL_AND:     return 2;
+		case OP_BITWISE_AND:     return 2;
+
+		case OP_LOGICAL_OR:      return 3;
+		case OP_BITWISE_OR:      return 3;
+		case OP_LOGICAL_XOR:     return 3;
+		case OP_BITWISE_XOR:     return 3;
+
+		case OP_ADD:             return 4;
+		case OP_SUBTRACT:        return 4;
+
+		case OP_MULTIPLY:        return 5;
+		case OP_DIVIDE:          return 5;
     }
-	return 0;
+	assertNever(op);
 }
 
 export function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCall | undefined {
@@ -884,6 +979,24 @@ export function parseNumberLiteral(parser: Parser): NumberLiteral | undefined {
     return result;
 }
 
+export function parseBooleanLiteral(parser: Parser, val: boolean): BooleanLiteral {
+	const pos = parserPos(parser);
+	
+	if (val) {
+		advanceBy(parser, "true".length);
+	} else {
+		advanceBy(parser, "false".length);
+	}
+
+    return {
+		parser: parser,
+        type: Expression_BooleanLiteral,
+		start: pos,
+		end:   parserPos(parser),
+		val: val,
+    };
+}
+
 export function computeNumberForNumberExpression(expr: NumberLiteral): number {
     let result = 0;
 
@@ -1020,8 +1133,9 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 	parseWhitespace(parser);
 	const pos = parserPos(parser);
 
-	if (!compareCurrentAndAdvance(parser, "fn(")) return;
-
+	if (!compareCurrentAndAdvance(parser, "fn")) return;
+	parseWhitespace(parser);
+	if (!compareCurrentAndAdvance(parser, "(")) return;
 	parseWhitespace(parser);
 
 	const args: FunctionArgument[] = [];

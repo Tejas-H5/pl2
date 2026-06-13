@@ -9,7 +9,7 @@ export function interpretProgram(program: ast.Program): ProgramIterator {
 	const iter = newProgramIterator(program);
 
 	// The root scope will never get popped.
-	pushScope(iter, false); 
+	pushScope(iter, 0); 
  
 	for (const expr of program.statements) {
 		const [val, err] = evaluateExpression(expr, iter);
@@ -46,9 +46,13 @@ type ProgramIterator = {
 
 type Scope = {
 	vars: Map<string, Result>;
-	allowContinueBreak: boolean;
+	flags: number;
 }
 
+const SCOPE_ALLOW_CONTINUE_BREAK = 1 << 0;
+const SCOPE_ISOLATED             = 1 << 1;
+
+const SCOPE_NON_ISOLATED_FLAGS = SCOPE_ALLOW_CONTINUE_BREAK;
 
 export function newProgramIterator(program: ast.Program): ProgramIterator {
 	return {
@@ -59,18 +63,18 @@ export function newProgramIterator(program: ast.Program): ProgramIterator {
 	};
 }
 
-export function pushScope(iter: ProgramIterator, allowContinueBreak: boolean): Scope {
+export function pushScope(iter: ProgramIterator, flags: number): Scope {
 	const scope: Scope = {
 		vars: new Map(),
-		allowContinueBreak: allowContinueBreak
+		flags: flags,
 	};
 	iter.scopes.push(scope);
 	return scope;
 }
 
-export function allowsContinueOrBreak(iter: ProgramIterator): boolean {
-	if (iter.scopes.length === 0) return false;
-	return iter.scopes[iter.scopes.length - 1].allowContinueBreak;
+export function currentScopeNonIsolatedFlags(iter: ProgramIterator): number {
+	if (iter.scopes.length === 0) return 0;
+	return iter.scopes[iter.scopes.length - 1].flags & SCOPE_NON_ISOLATED_FLAGS;
 }
 
 export function popScope(iter: ProgramIterator) {
@@ -89,8 +93,25 @@ export function getVar(iter: ProgramIterator, name: string): Result | undefined 
 
 export function setVar(iter: ProgramIterator, name: string, value: Result) {
 	if (iter.scopes.length === 0) return;
-	const lastScope = iter.scopes[iter.scopes.length - 1];
-	lastScope.vars.set(name, value);
+
+	let scope: Scope | undefined;
+	for (let i = iter.scopes.length - 1; i >= 0; i--) {
+		const iScope = iter.scopes[i];
+		if (iScope.vars.has(name)) {
+			scope = iScope;
+			break;
+		}
+
+		if (iScope.flags & SCOPE_ISOLATED) {
+			break;
+		}
+	}
+
+	if (!scope) {
+		scope = iter.scopes[iter.scopes.length - 1];
+	}
+
+	scope.vars.set(name, value);
 }
 
 export const Result_Nothing  = 0; // Also represented with 'undefined'
@@ -185,6 +206,13 @@ export function newNumber(val: number): ResultNumber {
 	};
 }
 
+export function newBoolean(val: boolean): ResultBoolean {
+	return {
+		type: Result_Boolean,
+		val:  val,
+	};
+}
+
 export function invalidOperatorError(opType: ast.BinaryOperatorType, lhs: Result, rhs: Result): EvaluateError {
 	return newError(`${ast.operatorToString(opType)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`)
 }
@@ -206,6 +234,7 @@ export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator):
 		case ast.Expression_TypeInitializer:  return evaluateTypeInitializer(expr, iter);
 		case ast.Expression_NumberLiteral:    return [{ type: Result_Number, val: expr.val }, null];
 		case ast.Expression_StringLiteral:    return [{ type: Result_String, val: expr.val }, null];
+		case ast.Expression_BooleanLiteral:   return [{ type: Result_Boolean, val: expr.val }, null];
 		case ast.Expression_FunctionDefinition: return [{ type: Result_Function, val: expr }, null];
 		case ast.Expression_Return: {
 			if (!expr.expr) return [NOTHING, null];
@@ -215,7 +244,7 @@ export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator):
 		case ast.Expression_Break:    { return [NOTHING, null]; } break;
 		case ast.Expression_ReturnBlock: {
 			let result;
-			pushScope(iter, false); {
+			pushScope(iter, 0); {
 				result = evaluateExpressionBlock(expr.block, iter);
 			} popScope(iter);
 			return result;
@@ -240,7 +269,7 @@ function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator): [Res
 	let result = NOTHING;
 	let error: EvaluateError = null;
 
-	pushScope(iter, false); {
+	pushScope(iter, SCOPE_ISOLATED); {
 		[result, error] = evaluateFunctionCallInternal(fn, iter);
 	} popScope(iter);
 
@@ -281,9 +310,9 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 }
 
 function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator): [Result, EvaluateError] {
-	const allowContinueOrBreak = allowsContinueOrBreak(iter);
+	const scopeFlags = currentScopeNonIsolatedFlags(iter);
 	for (const expr of block) {
-		if (allowContinueOrBreak) {
+		if (scopeFlags & SCOPE_ALLOW_CONTINUE_BREAK) {
 			if (expr.type === ast.Expression_Break) {
 				return [BREAK, null];
 			} else if (expr.type === ast.Expression_Continue) {
@@ -306,7 +335,7 @@ function evaluateIfChain(expr: ast.IfChain, iter: ProgramIterator): [Result, Eva
 	let result = NOTHING;
 	let err: EvaluateError = null;
 
-	const scope = pushScope(iter, allowsContinueOrBreak(iter)); {
+	const scope = pushScope(iter, currentScopeNonIsolatedFlags(iter)); {
 		[result, err] = evaluateIfChainInternal(expr, iter, scope);
 	} popScope(iter);
 
@@ -318,13 +347,9 @@ function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, scope
 		const [checkResult, err] = evaluateExpression(branch.check, iter);
 		if (err)                                 return [checkResult, err];
 		if (checkResult.type !== Result_Boolean) return [NOTHING, newError("If check needs to be a boolean")]
-
-		// Epic efficiency gain strategy thing.
-		scope.vars.clear();
-
-		const [result, resultErr] = evaluateExpressionBlock(branch.block, iter); 
-		if (resultErr) return [result, resultErr];
-		if (result !== NOTHING) return [result, resultErr];
+		if (checkResult.val === true) {
+			return evaluateExpressionBlock(branch.block, iter); 
+		}
 	}
 
 	if (expr.else) {
@@ -365,17 +390,31 @@ function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterat
 
 function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperatorType, rhs: Result): [Result, EvaluateError] {
 	if (lhs.type === Result_Number && rhs.type === Result_Number) {
-		let value: ResultNumber = { type: Result_Number, val: 0 };
 		switch (exprOp) {
-			case ast.OP_ADD:      { value.val = lhs.val + rhs.val; } break;
-			case ast.OP_SUBTRACT: { value.val = lhs.val - rhs.val; } break;
-			case ast.OP_MULTIPLY: { value.val = lhs.val * rhs.val; } break;
-			case ast.OP_DIVIDE:   { value.val = lhs.val / rhs.val; } break;
-
+			case ast.OP_ADD:         return [newNumber(lhs.val + rhs.val), null];
+			case ast.OP_SUBTRACT:    return [newNumber(lhs.val - rhs.val), null];
+			case ast.OP_MULTIPLY:    return [newNumber(lhs.val * rhs.val), null];
+			case ast.OP_DIVIDE:      return [newNumber(lhs.val / rhs.val), null];
+			case ast.OP_BITWISE_AND: return [newNumber(lhs.val & rhs.val), null];
+			case ast.OP_BITWISE_OR:  return [newNumber(lhs.val | rhs.val), null];
+			case ast.OP_BITWISE_XOR: return [newNumber(lhs.val ^ rhs.val), null];
+			case ast.OP_LESS_THAN:       return [newBoolean(lhs.val < rhs.val), null];
+			case ast.OP_LESS_THAN_EQ:    return [newBoolean(lhs.val <= rhs.val), null];
+			case ast.OP_GREATER_THAN:    return [newBoolean(lhs.val > rhs.val), null];
+			case ast.OP_GREATER_THAN_EQ: return [newBoolean(lhs.val >= rhs.val), null];
+			case ast.OP_EQ:              return [newBoolean(lhs.val == rhs.val), null];
+			case ast.OP_NOT_EQ:          return [newBoolean(lhs.val != rhs.val), null];
 			default: return [NOTHING, invalidOperatorError(exprOp, lhs, rhs)]
 		}
+	}
 
-		return [value, null];
+	if (lhs.type === Result_Boolean && rhs.type === Result_Boolean) {
+		switch (exprOp) {
+			case ast.OP_LOGICAL_AND: return [newBoolean(lhs.val && rhs.val), null];
+			case ast.OP_LOGICAL_OR:  return [newBoolean(lhs.val || rhs.val), null];
+			case ast.OP_LOGICAL_XOR: return [newBoolean(lhs.val != rhs.val), null];
+			default: return [NOTHING, invalidOperatorError(exprOp, lhs, rhs)]
+		}
 	}
 
 	if (lhs.type === Result_String && rhs.type === Result_String) {
@@ -401,7 +440,7 @@ function evaluateForLoop(expr: ast.ForLoop, iter: ProgramIterator): [Result, Eva
 	let result = NOTHING;
 	let error: EvaluateError = null;
 
-	const scope = pushScope(iter, true); {
+	const scope = pushScope(iter, SCOPE_ALLOW_CONTINUE_BREAK); {
 		[result, error] = evaluateForLoopInternal(expr, iter, scope);
 	} popScope(iter);
 

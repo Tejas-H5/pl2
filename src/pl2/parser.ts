@@ -1,3 +1,4 @@
+import { isLetter } from "./string-utils";
 import { advanceTextPosition, assignTextPosition, cloneTextPosition, TextPosition } from "./text-pos";
 
 export type Parser = {
@@ -38,6 +39,19 @@ export function compareCurrent(r: Parser, str: string): boolean {
     }
 
     return true;
+}
+
+export function compareCurrentWithWordBoundary(r: Parser, str: string): boolean {
+	if (compareCurrent(r, str)) {
+		const next = r.text[r.pos.i + str.length];
+		if (next && isLetter(next)) {
+			return false;
+		}
+
+		return true;
+	}
+
+	return false;
 }
 
 // TODO: WE NEED TO HANDLE THE RETURN VALUE !!!

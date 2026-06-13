@@ -7,14 +7,18 @@ ALL_TESTS
 // each worker doesn't end up doing a bunch of bundling at the start.
 const results = runAllTests();
 
+function getDisplayableName(name: string): string {
+	return name.replace(/\s+/g, " ");
+}
+
 function printTestResult(test: TestResult, depth: number) {
 	if (test.fails) {
-		console.log("  ".repeat(depth + 1), "FAIL", test.name);
+		console.log("  ".repeat(depth + 1), "FAIL", getDisplayableName(test.name));
 		for (const fail of test.fails) {
 			console.log("  ".repeat(depth + 2), fail);
 		}
 	} else {
-		console.log("  ".repeat(depth + 1), "PASS", test.name);
+		console.log("  ".repeat(depth + 1), "PASS", getDisplayableName(test.name));
 	}
 }
 
@@ -34,9 +38,9 @@ function printResults(g: TestGroup, hasFailures: boolean, depth: number, mode: n
 	}
 
 	if (g._fails === 0) {
-		console.log("  ".repeat(depth), "PASS (" + g._checks + ", " + Math.floor(g._time) + "ms)", g.name);
+		console.log("  ".repeat(depth), "PASS (" + g._checks + ", " + Math.floor(g._time) + "ms)", getDisplayableName(g.name));
 	} else {
-		console.log("  ".repeat(depth), "FAIL (" + g._fails + ", " +  Math.floor(g._time) + "ms)", g.name);
+		console.log("  ".repeat(depth), "FAIL (" + g._fails + ", " +  Math.floor(g._time) + "ms)", getDisplayableName(g.name));
 	}
 
 	if (g.subgroups) {
