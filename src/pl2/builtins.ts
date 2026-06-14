@@ -29,11 +29,11 @@ export function getBuiltinFn(name: string): BuiltinFn | undefined {
 		case "math_clamp": return math_clamp;
 		case "math_sin":   return math_sin;
 		case "math_cos":   return math_cos;
-		// case "math_tan":        return math_tan;
-		// case "math_asin":       return math_asin;
-		// case "math_acos":       return math_acos;
-		// case "math_atan":       return math_atan;
-		// case "math_atan2":      return math_atan2;
+		case "math_tan":   return math_tan;
+		case "math_asin":  return math_asin;
+		case "math_acos":  return math_acos;
+		case "math_atan":  return math_atan;
+		case "math_atan2": return math_atan2;
 		// case "math_log":        return math_log;
 		// case "math_ln":         return math_ln;
 		// case "math_pow":        return math_pow;
@@ -100,10 +100,10 @@ export function math_clamp(call: FunctionCall, iter: ProgramIterator, dst: Slot)
 	if (checkNumArgs(call, "math_clamp", 3, dst))   return RETURN_ERR;
 	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
 
-	const minDst = newSlot();
+	const minDst = iter.temp1;
 	if (evaluateArgumentNumber(call, 1, iter, minDst) === RETURN_ERR) return setError(dst, minDst.error);
 
-	const maxDst = newSlot();
+	const maxDst = iter.temp2;
 	if (evaluateArgumentNumber(call, 2, iter, maxDst) === RETURN_ERR) return setError(dst, maxDst.error);
 
 	let clamped = (dst.result as ResultNumber).val;
@@ -125,43 +125,35 @@ export function math_cos(call: FunctionCall, iter: ProgramIterator, dst: Slot): 
 	return setResultNumber(dst, Math.cos((dst.result as ResultNumber).val))
 }
 
-// export function math_cos(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_tan(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_asin(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_acos(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_atan(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_atan2(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_log(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_ln(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_pow(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
-//
-// export function math_sqrt(call: FunctionCall, iter: ProgramIterator): ExprReturn {
-//
-// }
+export function math_tan(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_tan", 1, dst))                    return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	return setResultNumber(dst, Math.tan((dst.result as ResultNumber).val))
+}
+
+export function math_asin(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_asin", 1, dst))                    return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	return setResultNumber(dst, Math.asin((dst.result as ResultNumber).val))
+}
+
+export function math_acos(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_acos", 1, dst))                    return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	return setResultNumber(dst, Math.acos((dst.result as ResultNumber).val))
+}
+
+export function math_atan(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_atan", 1, dst))                    return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	return setResultNumber(dst, Math.atan((dst.result as ResultNumber).val))
+}
+
+export function math_atan2(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_atan2", 2, dst))                  return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
+	if (evaluateArgumentNumber(call, 1, iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
+
+	return setResultNumber(dst, Math.atan2((iter.temp1.result as ResultNumber).val, (iter.temp2.result as ResultNumber).val))
+}
 

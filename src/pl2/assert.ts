@@ -4,6 +4,6 @@ export function assert(val: boolean): asserts val {
 	}
 }
 
-export function assertNever(val: never) {
+export function assertNever(val: never): never {
 	throw new Error("Unhandled expression type: " + val);
 }

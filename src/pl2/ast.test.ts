@@ -231,6 +231,16 @@ addTestGroup("Binary expressions", [ast.parseExpression, ast.parseBinaryExpressi
 		test(r, isIdentifier(expr.rhs.lhs.lhs, "b"))
 		test(r, isIdentifier(expr.rhs.lhs.rhs, "c"))
 	});
+
+	addTest("Precedence 3", r => {
+		const expr = ast.parseExpressionFromText("x = 5 == 0 && true");
+		testAssert(r, !!expr);
+
+		testAssert(r, expr.type === ast.Expression_BinaryExpression);
+		testAssert(r, expr.lhs.type === ast.Expression_Identifier);
+		testAssert(r, expr.rhs.type === ast.Expression_BinaryExpression);
+		testAssert(r, expr.rhs.op.type === ast.OP_LOGICAL_AND, ast.operatorToString(expr.rhs.op.type));
+	});
 });
 
 addTestGroup("Function call arguments", [ast.parseFunctionCall], () => {

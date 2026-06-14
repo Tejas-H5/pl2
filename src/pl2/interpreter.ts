@@ -36,6 +36,13 @@ export type ProgramIterator = {
 	scopes: Scope[];
 
 	logs: LogEntry[];
+
+	temp1: Slot;
+	temp2: Slot;
+	temp3: Slot;
+	temp4: Slot;
+	temp5: Slot;
+	temp6: Slot;
 }
 
 export type LogEntry = {
@@ -56,9 +63,15 @@ export function newProgramIterator(program: ast.Program): ProgramIterator {
 	return {
 		program: program,
 		nextStatementIdx: 0,
-		stack: [],
+		stack:  [],
 		scopes: [],
-		logs: [],
+		logs:   [],
+		temp1: newSlot(),
+		temp2: newSlot(),
+		temp3: newSlot(),
+		temp4: newSlot(),
+		temp5: newSlot(),
+		temp6: newSlot(),
 	};
 }
 
@@ -457,6 +470,7 @@ function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperato
 			case ast.OP_SUBTRACT:        return setResultNumber(dst, lhs.val - rhs.val);
 			case ast.OP_MULTIPLY:        return setResultNumber(dst, lhs.val * rhs.val);
 			case ast.OP_DIVIDE:          return setResultNumber(dst, lhs.val / rhs.val);
+			case ast.OP_MODULO:          return setResultNumber(dst, lhs.val % rhs.val);
 			case ast.OP_BITWISE_AND:     return setResultNumber(dst, lhs.val & rhs.val);
 			case ast.OP_BITWISE_OR:      return setResultNumber(dst, lhs.val | rhs.val);
 			case ast.OP_BITWISE_XOR:     return setResultNumber(dst, lhs.val ^ rhs.val);

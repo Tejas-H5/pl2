@@ -42,6 +42,16 @@ function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, mes
 	}
 }
 
+function testEqualLogs(r: TestResult, result: pl2.ProgramIterator, expected: string[]) {
+	if (testEqual(r, result.logs.length, expected.length)) {
+		for (let i = 0; i < expected.length; i++) {
+			const line = expected[i];
+			const got = result.logs[i].text;
+			testEqual(r, got, line, "line " + i);
+		}
+	}
+}
+
 addTestGroup("Binary operations", [], () => {
 	addTestGroup("Assignment", [], () => {
 		addTest("Normal assigning", r => {
@@ -80,6 +90,7 @@ addTestGroup("Binary operations", [], () => {
 				{ sample: "x = 0\n x -= 2", expected: pl2.newNumber(-2) },
 				{ sample: "x = 2\n x *= 2", expected: pl2.newNumber(4) },
 				{ sample: "x = 2\n x *= -2", expected: pl2.newNumber(-4) },
+				{ sample: "x = 3\n x %= 2", expected: pl2.newNumber(1) },
 
 				{ sample: "x = true\n x &&= true",   expected: pl2.newBoolean(true) },
 				{ sample: "x = false\n x &&= true",  expected: pl2.newBoolean(false) },
@@ -113,6 +124,10 @@ addTestGroup("Binary operations", [], () => {
 				{ sample: "x = 3 >= 2", expected: pl2.newBoolean(true) },
 				{ sample: "x = 2 >= 2", expected: pl2.newBoolean(true) },
 				{ sample: "x = 1 >= 2", expected: pl2.newBoolean(false) },
+
+				{ sample: "x = 15 % 3 == 0", expected: pl2.newBoolean(true) },
+				{ sample: "x = 15 % 5 == 0", expected: pl2.newBoolean(true) },
+				{ sample: "x = 15 % 5 == 0 && 15 % 3 == 0", expected: pl2.newBoolean(true) },
 			];
 
 			for (const test of tests) {
@@ -419,13 +434,33 @@ addTestGroup("For-Loops", [], () => {
 	for (const test of tests) {
 		addTest(test.name, r => {
 			const result = pl2.interpretCode(test.code);
-			if (testEqual(r, test.expected.length, result.logs.length)) {
-				for (let i = 0; i < test.expected.length; i++) {
-					const expected = test.expected[i];
-					const got = result.logs[i].text;
-					testEqual(r, got, expected);
-				}
-			}
+			testEqualLogs(r, result, test.expected);;
 		})
 	}
+});
+
+addTestGroup("More complicated programs", [], () => {
+	addTest("Fizz buzz", r => {
+		const result = pl2.interpretCode(`
+			for i in 1..<=15 {
+				if i % 3 == 0 && i % 5 == 0 {
+					print(i, "fizzbuzz")
+				} else if i % 3 == 0 {
+					print(i, "fizz")
+				} else if i % 5 == 0 {
+					print(i, "buzz")
+				}
+			}
+		`);
+
+		testEqualLogs(r, result, [
+			"3 fizz",
+			"5 buzz",
+			"6 fizz",
+			"9 fizz",
+			"10 buzz",
+			"12 fizz",
+			"15 fizzbuzz",
+		]);
+	});
 });

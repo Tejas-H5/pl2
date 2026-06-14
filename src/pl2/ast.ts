@@ -12,19 +12,20 @@ export const OP_NONE        = 0;
 export const OP_ADD         = 1;
 export const OP_SUBTRACT    = 2;
 export const OP_MULTIPLY    = 3;
-export const OP_DIVIDE      = 4;
-export const OP_LOGICAL_AND = 5;
-export const OP_BITWISE_AND = 6;
-export const OP_LOGICAL_OR  = 7;
-export const OP_BITWISE_OR  = 8;
-export const OP_LOGICAL_XOR = 9;
-export const OP_BITWISE_XOR = 10;
-export const OP_LESS_THAN       = 11;
-export const OP_LESS_THAN_EQ    = 12;
-export const OP_GREATER_THAN    = 13;
-export const OP_GREATER_THAN_EQ = 14;
-export const OP_EQ              = 15;
-export const OP_NOT_EQ          = 16;
+export const OP_MODULO      = 4;
+export const OP_DIVIDE      = 5;
+export const OP_LOGICAL_AND = 6;
+export const OP_BITWISE_AND = 7;
+export const OP_LOGICAL_OR  = 8;
+export const OP_BITWISE_OR  = 9;
+export const OP_LOGICAL_XOR = 10;
+export const OP_BITWISE_XOR = 11;
+export const OP_LESS_THAN       = 12;
+export const OP_LESS_THAN_EQ    = 13;
+export const OP_GREATER_THAN    = 14;
+export const OP_GREATER_THAN_EQ = 15;
+export const OP_EQ              = 16;
+export const OP_NOT_EQ          = 17;
 
 export type BinaryOperatorType =
  | typeof OP_NONE
@@ -32,6 +33,7 @@ export type BinaryOperatorType =
  | typeof OP_SUBTRACT
  | typeof OP_MULTIPLY
  | typeof OP_DIVIDE
+ | typeof OP_MODULO
  | typeof OP_LOGICAL_AND
  | typeof OP_BITWISE_AND
  | typeof OP_LOGICAL_OR
@@ -53,6 +55,7 @@ export function operatorToString(op: BinaryOperatorType): string {
 		case OP_SUBTRACT:    return "-";
 		case OP_MULTIPLY:    return "*";
 		case OP_DIVIDE:      return "/";
+		case OP_MODULO:      return "%";
 		case OP_LOGICAL_AND: return "&&";
 		case OP_BITWISE_AND: return "&";
 		case OP_LOGICAL_OR:  return "||";
@@ -310,6 +313,7 @@ export function parseOperatorInternal(parser: Parser): BinaryOperatorType {
 	if (compareCurrent(parser, "-"))  { advanceBy(parser, 1); return OP_SUBTRACT; }
 	if (compareCurrent(parser, "*"))  { advanceBy(parser, 1); return OP_MULTIPLY; }
 	if (compareCurrent(parser, "/"))  { advanceBy(parser, 1); return OP_DIVIDE; }
+	if (compareCurrent(parser, "%"))  { advanceBy(parser, 1); return OP_MODULO; }
 	if (compareCurrent(parser, "&&")) { advanceBy(parser, 2); return OP_LOGICAL_AND; }
 	if (compareCurrent(parser, "&"))  { advanceBy(parser, 1); return OP_BITWISE_AND; }
 	if (compareCurrent(parser, "||")) { advanceBy(parser, 2); return OP_LOGICAL_OR; }
@@ -663,6 +667,7 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 		if (!op) {
 			op = parseOperator(parser);
 			if (!op) {
+				// TODO: report expected operator error
 				break;
 			}
 		}
@@ -749,30 +754,32 @@ export function getOpLevel(op: BinaryOperatorType): number {
 	// The concept is the same as precedence, but it's easier to think about imo.
 
     switch (op) {
-		case OP_NONE:            return 0;
+		case OP_NONE:            return 0; // Sole assignment
 
-		case OP_LESS_THAN:       return 1;
-		case OP_LESS_THAN_EQ:    return 1;
-		case OP_GREATER_THAN:    return 1;
-		case OP_GREATER_THAN_EQ: return 1;
-		case OP_EQ:              return 1;
-		case OP_NOT_EQ:          return 1;
+		case OP_LOGICAL_AND:     return 1;
+		case OP_BITWISE_AND:     return 1;
 
-		case OP_LOGICAL_AND:     return 2;
-		case OP_BITWISE_AND:     return 2;
+		case OP_LOGICAL_OR:      return 2;
+		case OP_BITWISE_OR:      return 2;
+		case OP_LOGICAL_XOR:     return 2;
+		case OP_BITWISE_XOR:     return 2;
 
-		case OP_LOGICAL_OR:      return 3;
-		case OP_BITWISE_OR:      return 3;
-		case OP_LOGICAL_XOR:     return 3;
-		case OP_BITWISE_XOR:     return 3;
+		case OP_LESS_THAN:       return 3;
+		case OP_LESS_THAN_EQ:    return 3;
+		case OP_GREATER_THAN:    return 3;
+		case OP_GREATER_THAN_EQ: return 3;
+		case OP_EQ:              return 3;
+		case OP_NOT_EQ:          return 3;
 
 		case OP_ADD:             return 4;
 		case OP_SUBTRACT:        return 4;
 
 		case OP_MULTIPLY:        return 5;
 		case OP_DIVIDE:          return 5;
+		case OP_MODULO:          return 5;
     }
-	assertNever(op);
+
+	return assertNever(op);
 }
 
 export function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCall | undefined {
