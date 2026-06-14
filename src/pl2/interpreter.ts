@@ -8,17 +8,11 @@ export function interpretProgram(program: ast.Program): ProgramIterator {
 
 	// The root scope will never get popped.
 	pushScope(iter, 0); 
- 
-	for (const expr of program.statements) {
-		const [val, err] = evaluateExpression(expr, iter);
-		if (err || val !== NOTHING) break;
-	}
 
-	// while (true) {
-	// 	if (!stepProgram(iter)) {
-	// 		break;
-	// 	}
-	// }
+	for (const expr of program.statements) {
+		const dst = newSlot();
+		if (evaluateExpression(expr, iter, dst) !== RETURN_NONE) break;
+	}
 
 	return iter;
 }
@@ -50,7 +44,7 @@ export type LogEntry = {
 }
 
 export type Scope = {
-	vars: Map<string, Result>;
+	vars: Map<string, Slot>;
 	flags: number;
 }
 
@@ -90,14 +84,16 @@ export function getVar(iter: ProgramIterator, name: string): Result | undefined 
 	for (let i = iter.scopes.length - 1; i >= 0; i--) {
 		const scope = iter.scopes[i];
 		const value = scope.vars.get(name)
-		if (value) return value;
+		if (value) return value.result;
 	}
 
 	return undefined;
 }
 
-export function setVar(iter: ProgramIterator, name: string, value: Result) {
-	if (iter.scopes.length === 0) return;
+const NIL_SLOT = newSlot();
+
+export function newVar(iter: ProgramIterator, name: string): Slot {
+	if (iter.scopes.length === 0) return NIL_SLOT;
 
 	let scope: Scope | undefined;
 	for (let i = iter.scopes.length - 1; i >= 0; i--) {
@@ -116,7 +112,10 @@ export function setVar(iter: ProgramIterator, name: string, value: Result) {
 		scope = iter.scopes[iter.scopes.length - 1];
 	}
 
-	scope.vars.set(name, value);
+	const slot = newSlot();
+	scope.vars.set(name, slot);
+
+	return slot;
 }
 
 export const Result_Nothing  = 0; // Also represented with 'undefined'
@@ -150,38 +149,41 @@ export type ResultType =
  | typeof Result_Map
  ;
 
-export type ResultNumber = {
+type ResultBase = { type: number; val: unknown; }
+
+export type ResultNumber = ResultBase & {
 	type: typeof Result_Number;
 	val: number;
 }
 
-export type ResultString = {
+export type ResultString = ResultBase & {
 	type: typeof Result_String;
 	val: string;
 }
 
-export type ResultBoolean = {
+export type ResultBoolean = ResultBase & {
 	type: typeof Result_Boolean;
 	val: boolean;
 }
 
-export type ResultFunction = {
+export type ResultFunction = ResultBase & {
 	type: typeof Result_Function;
 	val: ast.FunctionDefinition;
 }
 
-export type ResultList = {
+export type ResultList = ResultBase & {
 	type: typeof Result_List;
 	val: Result[];
 }
 
-export type ResultMap = {
+export type ResultMap = ResultBase & {
 	type: typeof Result_Map;
 	val: Map<number, { key: Result, val: Result }>;
 }
 
-export type ResultNothing = {
+export type ResultNothing = ResultBase & {
 	type: typeof Result_Nothing;
+	val: undefined,
 }
 
 export type Result =
@@ -194,113 +196,164 @@ export type Result =
  | ResultMap
  ;
 
-export type EvaluateError = {
-	reason: string;
-} | null;
+export type Slot = {
+	result: Result;
+	error:  string | undefined;
+};
 
-export function newError(reason: string): EvaluateError {
+// Try to keep these to a minimum.
+export function newSlot(): Slot {
 	return {
-		reason: reason,
-	}
+		result: NOTHING,
+		error: undefined,
+	};
+}
+
+export function cloneResult(src: Result): Result {
+	return { type: src.type, val: src.val } as Result;
+}
+
+export function setError(dst: Slot, reason: string | undefined): typeof RETURN_ERR {
+	dst.error = reason;
+	return RETURN_ERR;
+}
+
+export function setResultNumber(dst: Slot, val: number): typeof RETURN_VAL {
+	dst.result = newNumber(val);
+	return RETURN_VAL;
+}
+
+export function setResultBoolean(dst: Slot, val: boolean): typeof RETURN_VAL {
+	dst.result = newBoolean(val);
+	return RETURN_VAL;
+}
+
+export function setResultString(dst: Slot, val: string): typeof RETURN_VAL {
+	dst.result = newString(val);
+	return RETURN_VAL;
+}
+
+export function setResult(dst: Slot, val: Result): typeof RETURN_VAL {
+	dst.result = val;
+	return RETURN_VAL;
 }
 
 export function newNumber(val: number): ResultNumber {
-	return {
-		type: Result_Number,
-		val: val,
-	};
+	return {type: Result_Number, val: val,};
 }
 
 export function newBoolean(val: boolean): ResultBoolean {
-	return {
-		type: Result_Boolean,
-		val:  val,
-	};
+	return {type: Result_Boolean, val:  val,};
 }
 
-export function invalidOperatorError(opType: ast.BinaryOperatorType, lhs: Result, rhs: Result): EvaluateError {
-	return newError(`${ast.operatorToString(opType)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`)
+export function newString(val: string): ResultString {
+	return {type: Result_String, val:  val,};
 }
 
-export const NOTHING: Result = { type: Result_Nothing }
-export const BREAK: Result = { type: Result_Nothing }
-export const CONTINUE: Result = { type: Result_Nothing }
+export function invalidOperatorError(opType: ast.BinaryOperatorType, lhs: Result, rhs: Result): string {
+	return `${ast.operatorToString(opType)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`;
+}
+
+// NOTE: compared by reference. You can't just construct the same object and expect it to work
+export const NOTHING:  ResultNothing = { type: Result_Nothing, val: undefined }
+export const BREAK:    ResultNothing = { type: Result_Nothing, val: undefined }
+export const CONTINUE: ResultNothing = { type: Result_Nothing, val: undefined }
+
+export const RETURN_NONE  = 0;
+export const RETURN_VAL = 1;
+export const RETURN_ERR = 2;
+
+export type ExprReturn = 
+ | typeof RETURN_NONE
+ | typeof RETURN_VAL
+ | typeof RETURN_ERR
+ ;
+
+export type ExprValueReturn = 
+ | typeof RETURN_VAL
+ | typeof RETURN_ERR;
+
+export type ExprNoReturn = 
+ | typeof RETURN_NONE
+ | typeof RETURN_ERR;
 
 
 // TODO: Don't end up with this - we need an alternative formulation that lets us step through the program.
 // It doesn't need to be an elaborate VM like last time - a simple control-flow graph is fine.
-export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator): [Result, EvaluateError] {
+export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator, dst: Slot): ExprReturn {
 	switch (expr.type) {
-		case ast.Expression_Identifier:       return evaluateIdentifier(expr, iter);
-		case ast.Expression_BinaryExpression: return evaluateBinaryOperation(expr, iter);
-		case ast.Expression_FunctionCall:     return evaluateFunctionCall(expr, iter);
-		case ast.Expression_IfChain:          return evaluateIfChain(expr, iter); 
-		case ast.Expression_ForLoop:          return evaluateForLoop(expr, iter);
-		case ast.Expression_TypeInitializer:  return evaluateTypeInitializer(expr, iter);
-		case ast.Expression_NumberLiteral:    return [{ type: Result_Number, val: expr.val }, null];
-		case ast.Expression_StringLiteral:    return [{ type: Result_String, val: expr.val }, null];
-		case ast.Expression_BooleanLiteral:   return [{ type: Result_Boolean, val: expr.val }, null];
-		case ast.Expression_FunctionDefinition: return [{ type: Result_Function, val: expr }, null];
+		case ast.Expression_Identifier:         return evaluateIdentifier(expr, iter, dst);
+		case ast.Expression_BinaryExpression:   return evaluateBinaryOperation(expr, iter, dst);
+		case ast.Expression_FunctionCall:       return evaluateFunctionCall(expr, iter, dst);
+		case ast.Expression_IfChain:            return evaluateIfChain(expr, iter, dst); 
+		case ast.Expression_ForLoop:            return evaluateForLoop(expr, iter, dst);
+		case ast.Expression_TypeInitializer:    return evaluateTypeInitializer(expr, iter, dst);
+		case ast.Expression_NumberLiteral:      return setResultNumber(dst, expr.val);
+		case ast.Expression_StringLiteral:      return setResultString(dst, expr.val);
+		case ast.Expression_BooleanLiteral:     return setResultBoolean(dst, expr.val);
+		case ast.Expression_FunctionDefinition: return setResult(dst, { type: Result_Function, val: expr });
 		case ast.Expression_Return: {
-			if (!expr.expr) return [NOTHING, null];
-			return evaluateExpression(expr.expr, iter);
+			if (!expr.expr) return setResult(dst, NOTHING);
+			return evaluateExpression(expr.expr, iter, dst);
 		}
-		case ast.Expression_Continue: { return [NOTHING, null]; } break;
-		case ast.Expression_Break:    { return [NOTHING, null]; } break;
+		case ast.Expression_Continue: return RETURN_VAL;
+		case ast.Expression_Break:    return RETURN_VAL;
 		case ast.Expression_ReturnBlock: {
 			let result;
 			pushScope(iter, 0); {
-				result = evaluateExpressionBlock(expr.block, iter);
+				result = evaluateExpressionBlock(expr.block, iter, dst);
 			} popScope(iter);
 			return result;
 		}
 		default: {
 			assertNever(expr);
-			return [NOTHING, newError("Could not evaluate expression")];
+			return setError(dst, "Could not evaluate expression");
 		} break;
 	}
-
-	return [NOTHING, newError("Could not evaluate expression")];
 }
 
-export function evaluateCode(code: string, iter: ProgramIterator): [Result, EvaluateError] {
+export function evaluateExpressionValue(expr: ast.Expression, iter: ProgramIterator, dst: Slot): ExprValueReturn {
+	const rt = evaluateExpression(expr, iter, dst);
+	if (rt === RETURN_ERR)  return RETURN_ERR;
+	if (rt === RETURN_NONE) return setError(dst, "Expected an expression that results in a value here");
+	return rt;
+}
+
+export function evaluateCode(code: string, iter: ProgramIterator): [Result, string | undefined] {
 	const expr = ast.parseExpressionFromText(code);
-	if (!expr) return [NOTHING, newError("Couldn't parse the expression")];
+	if (!expr) return [NOTHING, "Couldn't parse the expression"];
 	
-	return evaluateExpression(expr, iter);
+	const slot = newSlot();
+	evaluateExpression(expr, iter, slot);
+	return [slot.result, slot.error];
 }
 
-function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator): [Result, EvaluateError] {
-	let result = NOTHING;
-	let error: EvaluateError = null;
+function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	let rt: ExprReturn = RETURN_NONE;
 
 	pushScope(iter, SCOPE_ISOLATED); {
-		[result, error] = evaluateFunctionCallInternal(fn, iter);
+		rt = evaluateFunctionCallInternal(fn, iter, dst);
 	} popScope(iter);
 
-	return [result, error]
+	return rt;
 }
 
-function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterator): [Result, EvaluateError] {
-	const functionName = fn.name.name;
-
+function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
 	// Users probably shouldn't be able to override builtin functions.
 	const builtinFn = getBuiltinFn(fn.name.name);
 	if (builtinFn) {
-		return builtinFn(fn, iter);
+		return builtinFn(fn, iter, dst);
 	}
 
+	const functionName = fn.name.name;
 	const userFn = getVar(iter, functionName);
 	if (userFn) {
-		if (userFn.type !== Result_Function) return [NOTHING, newError("Value was not a function - it was a " + typeToString(userFn.type))];
+		if (userFn.type !== Result_Function) return setError(dst, "Value was not a function - it was a " + typeToString(userFn.type));
 
 		const wantedNumArgs = userFn.val.args.length;
 		const gotNumArgs    = fn.arguments.length;
 		if (wantedNumArgs !== gotNumArgs) {
-			return [
-				NOTHING,
-				newError(`Wanted ${wantedNumArgs} arguments for function ${fn.name.name}, got ${gotNumArgs} arguments instead`)
-			];
+			return setError(dst, `Wanted ${wantedNumArgs} arguments for function ${fn.name.name}, got ${gotNumArgs} arguments instead`);
 		}
 
 		for (let i = 0; i < userFn.val.args.length; i++) {
@@ -309,246 +362,257 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 			// TODO: argument types, type validation
 
 			const argExpr = fn.arguments[i];
-			const [argVal, err] = evaluateExpression(argExpr, iter);
-			if (err) return [argVal, err];
-
-			setVar(iter, argName, argVal);
+			const varSlot = newVar(iter, argName);
+			const rt = evaluateExpression(argExpr, iter, varSlot); // We allow passing "nothing" into functions. Might change my mind later idk
+			if (rt === RETURN_ERR) return setError(dst, varSlot.error);
 		}
 
-		return evaluateExpressionBlock(userFn.val.body, iter);
+		return evaluateExpressionBlock(userFn.val.body, iter, dst);
 	}
 
-	return [NOTHING, newError(`Couldn't find function ${functionName} in this scope`)];
+	return setError(dst, `Couldn't find function ${functionName} in this scope`);
 }
 
-function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator): [Result, EvaluateError] {
+function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator, dst: Slot): ExprReturn {
 	const scopeFlags = currentScopeNonIsolatedFlags(iter);
+
 	for (const expr of block) {
 		if (scopeFlags & SCOPE_ALLOW_CONTINUE_BREAK) {
-			if (expr.type === ast.Expression_Break) {
-				return [BREAK, null];
-			} else if (expr.type === ast.Expression_Continue) {
-				return [CONTINUE, null];
-			}
+			if (expr.type === ast.Expression_Break)    return setResult(dst, BREAK);
+			if (expr.type === ast.Expression_Continue) return setResult(dst, CONTINUE);
 		}
 
-		const [result, err] = evaluateExpression(expr, iter);
-		if (err)                                 return [result, err];
-		if (expr.type === ast.Expression_Return) return [result, err];
+		const rt = evaluateExpression(expr, iter, dst);
+		if (rt === RETURN_ERR)                   return RETURN_ERR;
+		if (expr.type === ast.Expression_Return) return RETURN_VAL;
 	}
 
-	return [NOTHING, null]
+	return RETURN_NONE;
 }
 
 
-function evaluateIfChain(expr: ast.IfChain, iter: ProgramIterator): [Result, EvaluateError] {
-	if (expr.blocks.length === 0) return [NOTHING, newError("If chain was empty")];
+function evaluateIfChain(expr: ast.IfChain, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (expr.blocks.length === 0) return setError(dst, "If chain was empty");
 
-	let result = NOTHING;
-	let err: EvaluateError = null;
+	let rt: ExprReturn = RETURN_NONE;
 
 	const scope = pushScope(iter, currentScopeNonIsolatedFlags(iter)); {
-		[result, err] = evaluateIfChainInternal(expr, iter, scope);
+		rt = evaluateIfChainInternal(expr, iter, scope, dst);
 	} popScope(iter);
 
-	return [result, err];
+	return rt;
 }
 
-function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, scope: Scope): [Result, EvaluateError] {
+function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, scope: Scope, dst: Slot): ExprReturn {
+	const check = newSlot();
+
 	for (const branch of expr.blocks) {
-		const [checkResult, err] = evaluateExpression(branch.check, iter);
-		if (err)                                 return [checkResult, err];
-		if (checkResult.type !== Result_Boolean) return [NOTHING, newError("If check needs to be a boolean")]
-		if (checkResult.val === true) {
-			return evaluateExpressionBlock(branch.block, iter); 
+		if (evaluateExpression(branch.check, iter, check) === RETURN_ERR) return setError(dst, check.error);
+		if (check.result.type !== Result_Boolean)                         return setError(dst, "If check needs to be a boolean");
+		if (check.result.val === true) {
+			return evaluateExpressionBlock(branch.block, iter, dst); 
 		}
 	}
 
 	if (expr.else) {
 		scope.vars.clear();
-		return evaluateExpressionBlock(expr.else, iter);
+		return evaluateExpressionBlock(expr.else, iter, dst);
 	}
 
-	return [NOTHING, null];
+	return RETURN_NONE;
 }
 
-function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterator): [Result, EvaluateError] {
-	let value = NOTHING;
-	let err: EvaluateError = null;
-
-	[value, err] = evaluateExpression(expr.rhs, iter);
-	if (err) return [value, err];
+function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (evaluateExpressionValue(expr.rhs, iter, dst) === RETURN_ERR) return RETURN_ERR;
 
 	if (expr.op.type !== ast.OP_NONE) {
-		const [lhs, err2] = evaluateExpression(expr.lhs, iter);
-		if (err2) return [lhs, err2];
-
-		let err: EvaluateError = null;
-		[value, err] = evaluateBinaryOperationOnResults(lhs, expr.op.type, value);
-		if (err) return [value, err];
+		const lhs = newSlot();
+		if (evaluateExpressionValue(expr.lhs, iter, lhs) === RETURN_ERR) {
+			return setError(dst, lhs.error);
+		}
+		if (evaluateBinaryOperationOnResults(lhs.result, expr.op.type, dst.result, dst) !== RETURN_VAL) {
+			return RETURN_ERR;
+		}
 	}
 
 	if (expr.op.assignment) {
 		if (expr.lhs.type !== ast.Expression_Identifier) {
-			return [NOTHING, newError(`Can't assign to ${ast.expressionToString(iter.program.code, expr)}`)];
+			return setError(dst, `Can't assign to ${ast.expressionToString(iter.program.code, expr)}`);
 		}
 
-		setVar(iter, expr.lhs.name, value);
-		return [NOTHING, null];
+		const varSlot = newVar(iter, expr.lhs.name);
+		setResult(varSlot, dst.result);
+		dst.result = NOTHING;
+
+		return RETURN_NONE;
 	} 
 
-	return [value, null];
+	return RETURN_VAL;
 }
 
-function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperatorType, rhs: Result): [Result, EvaluateError] {
+function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperatorType, rhs: Result, dst: Slot): ExprReturn {
 	if (lhs.type === Result_Number && rhs.type === Result_Number) {
 		switch (exprOp) {
-			case ast.OP_ADD:         return [newNumber(lhs.val + rhs.val), null];
-			case ast.OP_SUBTRACT:    return [newNumber(lhs.val - rhs.val), null];
-			case ast.OP_MULTIPLY:    return [newNumber(lhs.val * rhs.val), null];
-			case ast.OP_DIVIDE:      return [newNumber(lhs.val / rhs.val), null];
-			case ast.OP_BITWISE_AND: return [newNumber(lhs.val & rhs.val), null];
-			case ast.OP_BITWISE_OR:  return [newNumber(lhs.val | rhs.val), null];
-			case ast.OP_BITWISE_XOR: return [newNumber(lhs.val ^ rhs.val), null];
-			case ast.OP_LESS_THAN:       return [newBoolean(lhs.val < rhs.val), null];
-			case ast.OP_LESS_THAN_EQ:    return [newBoolean(lhs.val <= rhs.val), null];
-			case ast.OP_GREATER_THAN:    return [newBoolean(lhs.val > rhs.val), null];
-			case ast.OP_GREATER_THAN_EQ: return [newBoolean(lhs.val >= rhs.val), null];
-			case ast.OP_EQ:              return [newBoolean(lhs.val == rhs.val), null];
-			case ast.OP_NOT_EQ:          return [newBoolean(lhs.val != rhs.val), null];
-			default: return [NOTHING, invalidOperatorError(exprOp, lhs, rhs)]
+			case ast.OP_ADD:             return setResultNumber(dst, lhs.val + rhs.val);
+			case ast.OP_SUBTRACT:        return setResultNumber(dst, lhs.val - rhs.val);
+			case ast.OP_MULTIPLY:        return setResultNumber(dst, lhs.val * rhs.val);
+			case ast.OP_DIVIDE:          return setResultNumber(dst, lhs.val / rhs.val);
+			case ast.OP_BITWISE_AND:     return setResultNumber(dst, lhs.val & rhs.val);
+			case ast.OP_BITWISE_OR:      return setResultNumber(dst, lhs.val | rhs.val);
+			case ast.OP_BITWISE_XOR:     return setResultNumber(dst, lhs.val ^ rhs.val);
+			case ast.OP_LESS_THAN:       return setResultBoolean(dst, lhs.val < rhs.val);
+			case ast.OP_LESS_THAN_EQ:    return setResultBoolean(dst, lhs.val <= rhs.val);
+			case ast.OP_GREATER_THAN:    return setResultBoolean(dst, lhs.val > rhs.val);
+			case ast.OP_GREATER_THAN_EQ: return setResultBoolean(dst, lhs.val >= rhs.val);
+			case ast.OP_EQ:              return setResultBoolean(dst, lhs.val == rhs.val);
+			case ast.OP_NOT_EQ:          return setResultBoolean(dst, lhs.val != rhs.val);
+			default:                     return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
 
 	if (lhs.type === Result_Boolean && rhs.type === Result_Boolean) {
 		switch (exprOp) {
-			case ast.OP_LOGICAL_AND: return [newBoolean(lhs.val && rhs.val), null];
-			case ast.OP_LOGICAL_OR:  return [newBoolean(lhs.val || rhs.val), null];
-			case ast.OP_LOGICAL_XOR: return [newBoolean(lhs.val != rhs.val), null];
-			default: return [NOTHING, invalidOperatorError(exprOp, lhs, rhs)]
+			case ast.OP_LOGICAL_AND: return setResultBoolean(dst, lhs.val && rhs.val);
+			case ast.OP_LOGICAL_OR:  return setResultBoolean(dst, lhs.val || rhs.val);
+			case ast.OP_LOGICAL_XOR: return setResultBoolean(dst, lhs.val != rhs.val);
+			default:                 return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
 
 	if (lhs.type === Result_String && rhs.type === Result_String) {
-		const value: ResultString = { type: Result_String, val: "" };
 		switch (exprOp) {
-			case ast.OP_ADD: { value.val = lhs.val + rhs.val; } break;
-			default: return [NOTHING, invalidOperatorError(exprOp, lhs, rhs)]
+			case ast.OP_ADD: return setResultString(dst, lhs.val + rhs.val);
+			default:         return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
 		}
-
-		return [value, null]
 	}
 
-	return [NOTHING, newError(`Can't apply ${ast.operatorToString(exprOp)} between ${typeToString(lhs.type)} and ${typeToString(rhs.type)}`)];
+	return setError(dst, `Can't apply ${ast.operatorToString(exprOp)} between ${typeToString(lhs.type)} and ${typeToString(rhs.type)}`);
 }
 
-function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator): [Result, EvaluateError] {
+function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator, dst: Slot): ExprReturn {
 	const val = getVar(iter, expr.name);
-	if (!val) return [NOTHING, newError("Variable not found: " + expr.name)];
-	return [val, null];
+	if (!val) {
+		return setError(dst, "Variable not found: " + expr.name);
+	}
+
+	return setResult(dst, val);
 }
 
-function evaluateForLoop(expr: ast.ForLoop, iter: ProgramIterator): [Result, EvaluateError] {
-	let result = NOTHING;
-	let error: EvaluateError = null;
+function evaluateForLoop(expr: ast.ForLoop, iter: ProgramIterator, dst: Slot): ExprReturn {
+	let rt: ExprReturn = RETURN_NONE;
 
 	const scope = pushScope(iter, SCOPE_ALLOW_CONTINUE_BREAK); {
-		[result, error] = evaluateForLoopInternal(expr, iter, scope);
+		rt = evaluateForLoopInternal(expr, iter, scope, dst);
 	} popScope(iter);
 
-	return [result, error];
+	return rt;
 }
 
-function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, scope: Scope): [Result, EvaluateError] {
-	const [start, err] = evaluateExpression(expr.range.start, iter);
-	if (err) return [start, err];
-	if (start.type !== Result_Number) return [NOTHING, newError("For loop range start needs to be a number")];
+function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, scope: Scope, dst: Slot): ExprReturn {
+	const loopVarSlot = newVar(iter, expr.range.varName.name);
 
-	setVar(iter, expr.range.varName.name, start);
+	const rtStart = evaluateExpressionValue(expr.range.start, iter, loopVarSlot);
+	if (rtStart === RETURN_ERR) return setError(dst, loopVarSlot.error);
+	if (loopVarSlot.result.type !== Result_Number) return setError(dst, "For loop range start needs to be a number");
+
+	const end = newSlot();
 
 	outer: while (true) {
-		const [end, err] = evaluateExpression(expr.range.end, iter);
-		if (err) return [end, err];
-		if (end.type !== Result_Number) return [NOTHING, newError("For loop range end needs to be a number")];
+		const rtEnd = evaluateExpressionValue(expr.range.end, iter, end);
+		if (rtEnd === RETURN_ERR) return setError(dst, end.error);
+		if (end.result.type !== Result_Number) return setError(dst, "For loop range end needs to be a number");
+
+		let endVal = end.result.val;
+
+		let nextLoopVal = loopVarSlot.result.val;
 
 		switch (expr.range.rangeType) {
 			case ast.RANGE_LT: {
-				if (start.val >= end.val) break outer;
-				start.val += 1;
+				if (loopVarSlot.result.val >= endVal) break outer;
+				nextLoopVal += 1;
 			} break;
 			case ast.RANGE_LTE: {
-				if (start.val > end.val)  break outer;
-				start.val += 1;
+				if (nextLoopVal > endVal)  break outer;
+				nextLoopVal += 1;
 			} break;
 			case ast.RANGE_GT: {
-				if (start.val <= end.val) break outer;
-				start.val -= 1;
+				if (nextLoopVal <= endVal) break outer;
+				nextLoopVal -= 1;
 			} break;
 			case ast.RANGE_GTE: {
-				if (start.val < end.val)  break outer;
-				start.val -= 1;
+				if (nextLoopVal < endVal)  break outer;
+				nextLoopVal -= 1;
 			} break;
 			default: {
 				assertNever(expr.range.rangeType);
 			}
 		}
 
-		const [blockResult, blockErr] = evaluateExpressionBlock(expr.statements, iter);
-		if (blockErr || blockResult !== NOTHING) {
-			if (blockResult === BREAK)    return [NOTHING, null];
-			if (blockResult === CONTINUE) continue; // Thin minimal wrapper around continue, blazingly fast.
-			return [blockResult, blockErr];
+		const rt = evaluateExpressionBlock(expr.statements, iter, dst);
+		if (rt === RETURN_ERR) return RETURN_ERR;
+		if (rt === RETURN_VAL) {
+			if (dst.result === BREAK) return setResult(dst, NOTHING);
+			if (dst.result === CONTINUE) {
+				setResult(dst, NOTHING);
+				loopVarSlot.result.val = nextLoopVal;
+				continue;
+			}
 		}
+
+		loopVarSlot.result.val = nextLoopVal;
 	}
 
-	return [NOTHING, null];
+	return RETURN_NONE;
 }
 
-function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator): [Result, EvaluateError] {
+function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator, dst: Slot): ExprReturn {
 	switch (expr.typename.name) {
 		case "list": {
 			const result: Result = { type: Result_List, val: [] };
-			// for now, we'll just ignore type args. xd
+
+			const slot = newSlot();
 			for (const arg of expr.args) {
-				const [val, err] = evaluateExpression(arg, iter);
-				if (err) return [val, err];
+				if (evaluateExpressionValue(arg, iter, slot) === RETURN_ERR) return setError(dst, slot.error);
 				// We'll allow empty values in the list, why not.
+				result.val.push(cloneResult(slot.result));
 			}
-			return [result, null];
+
+			return setResult(dst, result);
 		} break;
 		case "map": {
 			const result: Result = { type: Result_Map, val: new Map() };
 
 			// for now, we'll just ignore type args. xd
+			const slotKey = newSlot();
+			const slotVal = newSlot();
 			for (const arg of expr.args) {
 				if (
 					arg.type !== ast.Expression_BinaryExpression ||
 					!arg.op.assignment || 
 					arg.op.type !== ast.OP_NONE
 				) {
-					return [NOTHING, newError("Maps should be initialized like { key=value, key=value, etc. }")];
+					return setError(dst, "Maps should be initialized like { key=value, key=value, etc. }");
 				} 
 				
-				const [key, keyErr] = evaluateExpression(arg.lhs, iter);
-				if (keyErr) return [key, keyErr];
-				if (!isHashable(key)) return [NOTHING, newError(`type ${typeToString(key.type)} can't be used as a map key`)];
-
-				const [val, valErr] = evaluateExpression(arg.rhs, iter);
-				if (valErr) return [val, valErr];
-
-				const mapKey = getMapKey(key)
-				let slot = result.val.get(mapKey);
-				if (!slot) {
-					slot = { key, val };
-					result.val.set(mapKey, slot);
+				if (evaluateExpression(arg.lhs, iter, slotKey) === RETURN_ERR) return setError(dst, slotKey.error);
+				if (!isHashable(slotKey.result)) {
+					return setError(dst, `type ${typeToString(slotKey.result.type)} can't be used as a map key`);
 				}
-				slot.val = val;
+
+				if (evaluateExpression(arg.rhs, iter, slotVal) === RETURN_ERR) return setError(dst, slotVal.error);
+
+				const mapKey = getMapKey(slotKey.result)
+				if (result.val.has(mapKey)) return setError(dst, "Map initializer cannot contain duplicate keys");
+
+				const slot = { key: mapKey, val: cloneResult(slotVal.result) };
+				result.val.set(mapKey, slot);
 			}
-			return [result, null];
+
+			return setResult(dst, result);
 		} break;
 	}
 
-	return [NOTHING, newError(`Don't know how to initialize this type: ${expr.typename.name}`)];
+	return setError(dst, `Don't know how to initialize this type: ${expr.typename.name}`);
 }
 
 export function isHashable(result: Result): boolean {

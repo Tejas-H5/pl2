@@ -3,6 +3,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'url';
 
+const start = performance.now();
+
 // An attempt at a custom testing harness.
 // Usually, I'd just run all my tests via a HTML page, so that I can step through
 // them with the browser's dev-tools. But I'm trying to move away from relying
@@ -66,9 +68,7 @@ const options: esbuild.BuildOptions = {
 
 				runTests(result.outputFiles[0].text);
 
-				if (config === "watch") {
-					console.log("Reran all tests in " + Math.floor(performance.now() - t0) + "ms");
-				}
+				console.log("Reran all tests in " + Math.floor(performance.now() - t0) + "ms");
 			});
 		},
 	}],
@@ -79,4 +79,6 @@ if (config === "watch") {
 	await ctx.watch();
 } else {
 	await esbuild.build(options);
+
+	console.log("Completed in " + Math.floor(performance.now() - start) + "ms");
 }

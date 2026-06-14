@@ -3,6 +3,8 @@
 I've documented all the unusal patterns the codebase uses here, for future reference.
 I don't use AI on personal projects yet, but when I do, it will become useful.
 
+## Programming
+
 - Only functions and data. Don't be too fancy. Prefer non-capturing closures where possible. Just don't use a `class` ever.
     - Code becomes more consistent, easier to reason about, and we avoid circular dependency problem you get with dependency injection patterns.
     - Plain objects are far easier to consistently serialize and de-serialize than classes
@@ -15,3 +17,10 @@ I don't use AI on personal projects yet, but when I do, it will become useful.
         - Since we don't use React, or any libraries in general, we have plenty of 'budget' to spare in the bundle, so I don't care too much for now.
 - Try to avoid royal we
     - What do we mean by we? I meant me. Typing 'we' instead is just a bad habbit, not a convention
+
+## Tests
+
+- Use the bespoke test framework
+- All tests must be against the highest level of abstraction possible. Test `parseExpression` instead of testing `parseNumberLiteral` directly, for example.
+- All tests must complete in less than 1 second, considering the relative simplicity of this project.
+- Add new tests for every bug we are fixing

@@ -48,7 +48,23 @@ addTestGroup("Binary operations", [], () => {
 			const result = pl2.interpretCode("x = 1");
 
 			const [x, err] = pl2.evaluateCode("x", result);
-			testAssert(r, err === null);
+			testEqual(r, err, undefined);
+			testEqualResult(r, x, { type: pl2.Result_Number, val: 1 });
+		});
+
+		addTest("Multiple normal assigning", r => {
+			const result = pl2.interpretCode(`
+				x = 1
+				x = 100000000000
+				x = 1
+				x = 0
+				x = 1
+				x = 0
+				x = 1
+			`);
+
+			const [x, err] = pl2.evaluateCode("x", result);
+			testEqual(r, err, undefined);
 			testEqualResult(r, x, { type: pl2.Result_Number, val: 1 });
 		});
 
@@ -56,7 +72,7 @@ addTestGroup("Binary operations", [], () => {
 			addTest("Error case", r => {
 				const result = pl2.interpretCode("x += 2");
 				const [, err] = pl2.evaluateCode("x", result);
-				testEqual(r, err?.reason, "Variable not found: x");
+				testEqual(r, err, "Variable not found: x");
 			});
 
 			const tests = [
@@ -76,7 +92,7 @@ addTestGroup("Binary operations", [], () => {
 				addTest("Normal cases - " + test.sample, r => {
 					const result = pl2.interpretCode(test.sample);
 					const [x, err] = pl2.evaluateCode("x", result);
-					testEqual(r, err, null);
+					testEqual(r, err, undefined);
 					testEqualResult(r, x, test.expected, test.sample);
 				});
 			}
@@ -84,27 +100,27 @@ addTestGroup("Binary operations", [], () => {
 
 		addTestGroup("Comparisons", [], () => {
 			const tests = [
-				{ sample: "x = 1 < 2", expected: true },
-				{ sample: "x = 2 < 2", expected: false },
+				{ sample: "x = 1 < 2", expected: pl2.newBoolean(true) },
+				{ sample: "x = 2 < 2", expected: pl2.newBoolean(false) },
 
-				{ sample: "x = 1 <= 2", expected: true },
-				{ sample: "x = 2 <= 2", expected: true },
-				{ sample: "x = 3 <= 2", expected: false },
+				{ sample: "x = 1 <= 2", expected: pl2.newBoolean(true) },
+				{ sample: "x = 2 <= 2", expected: pl2.newBoolean(true) },
+				{ sample: "x = 3 <= 2", expected: pl2.newBoolean(false) },
 
-				{ sample: "x = 3 > 2", expected: true },
-				{ sample: "x = 2 > 2", expected: false },
+				{ sample: "x = 3 > 2", expected: pl2.newBoolean(true) },
+				{ sample: "x = 2 > 2", expected: pl2.newBoolean(false) },
 
-				{ sample: "x = 3 >= 2", expected: true },
-				{ sample: "x = 2 >= 2", expected: true },
-				{ sample: "x = 1 >= 2", expected: false },
+				{ sample: "x = 3 >= 2", expected: pl2.newBoolean(true) },
+				{ sample: "x = 2 >= 2", expected: pl2.newBoolean(true) },
+				{ sample: "x = 1 >= 2", expected: pl2.newBoolean(false) },
 			];
 
 			for (const test of tests) {
 				addTest("Normal cases - " + test.sample, r => {
 					const result = pl2.interpretCode(test.sample);
 					const [x, err] = pl2.evaluateCode("x", result);
-					testEqual(r, err, null);
-					testEqualResult(r, x, { type: pl2.Result_Boolean, val: test.expected }, test.sample);
+					testEqual(r, err, undefined);
+					testEqualResult(r, x, test.expected, test.sample);
 				});
 			}
 		});
@@ -121,11 +137,11 @@ addTestGroup("Binary operations", [], () => {
 				`);
 
 				const [x, err] = pl2.evaluateCode("x", result);
-				testEqual(r, err, null);
+				testEqual(r, err, undefined);
 				testEqualResult(r, x, pl2.newNumber(2))
 
 				const [y, err2] = pl2.evaluateCode("y", result);
-				testEqual(r, err2, null);
+				testEqual(r, err2, undefined);
 				testEqualResult(r, y, pl2.newNumber(1))
 			});
 
@@ -140,7 +156,7 @@ addTestGroup("Binary operations", [], () => {
 				`);
 
 				const [x, err] = pl2.evaluateCode("x", result);
-				testEqual(r, err, null);
+				testEqual(r, err, undefined);
 				testEqualResult(r, x, pl2.newNumber(0));
 			});
 
@@ -153,7 +169,7 @@ addTestGroup("Binary operations", [], () => {
 				`);
 
 				const [x, err] = pl2.evaluateCode("x", result);
-				testEqual(r, err, null);
+				testEqual(r, err, undefined);
 				testEqualResult(r, x, pl2.newNumber(1));
 			});
 
@@ -165,7 +181,7 @@ addTestGroup("Binary operations", [], () => {
 				`);
 
 				const [x, err] = pl2.evaluateCode("x", result);
-				testEqual(r, err?.reason, "Variable not found: x");
+				testEqual(r, err, "Variable not found: x");
 			});
 		});
 	})
@@ -179,7 +195,7 @@ addTestGroup("Binary operations", [], () => {
 			]);
 
 			const [c, err] = pl2.evaluateCode("c", result);
-			testEqual(r, err, null);
+			testEqual(r, err, undefined);
 			testEqualResult(r, c, pl2.newNumber(2));
 		});
 
@@ -189,7 +205,7 @@ addTestGroup("Binary operations", [], () => {
 			]);
 
 			const [c, err] = pl2.evaluateCode("x", result);
-			testEqual(r, err, null);
+			testEqual(r, err, undefined);
 			testEqualResult(r, c, pl2.newNumber(5));
 		});
 
@@ -199,7 +215,7 @@ addTestGroup("Binary operations", [], () => {
 			]);
 
 			const [c, err] = pl2.evaluateCode("x", result);
-			testEqual(r, err, null);
+			testEqual(r, err, undefined);
 			testEqualResult(r, c, pl2.newNumber(5));
 		});
 
@@ -209,7 +225,7 @@ addTestGroup("Binary operations", [], () => {
 			]);
 
 			const [c, err] = pl2.evaluateCode("x", result);
-			testEqual(r, err, null);
+			testEqual(r, err, undefined);
 			testEqualResult(r, c, pl2.newNumber(6));
 		});
 	});
@@ -224,7 +240,7 @@ addTestGroup("User functions", [], () => {
 		`);
 
 		const [val, err2] = pl2.evaluateCode("increment", result);
-		testEqual(r, err2, null);
+		testEqual(r, err2, undefined);
 		testEqual(r, val.type, pl2.Result_Function);
 	});
 
@@ -237,7 +253,7 @@ addTestGroup("User functions", [], () => {
 		`);
 
 		const [c, err] = pl2.evaluateCode("increment(2)", result);
-		testEqual(r, err, null);
+		testEqual(r, err, undefined);
 		testEqualResult(r, c, pl2.newNumber(3));
 	});
 });
@@ -251,6 +267,35 @@ addTestGroup("Builtin functions", [], () => {
 		testEqual(r, result.logs.length, 1);
 		testEqual(r, result.logs[0].text, "2");
 	});
+
+	const tests = [
+		{ name: "max 1", expr: "x = math_max(1, 2)",    expected: pl2.newNumber(2) },
+		{ name: "max 2", expr: "x = math_max(2, 1)",    expected: pl2.newNumber(2) },
+		{ name: "max 3", expr: "x = math_max(0, 1, 3)", expected: pl2.newNumber(3) },
+		{ name: "max 4", expr: "x = math_max()",        expected: pl2.newNumber(-Infinity) },
+
+		{ name: "min 1", expr: "x = math_min(1, 2)",    expected: pl2.newNumber(1) },
+		{ name: "min 2", expr: "x = math_min(2, 1)",    expected: pl2.newNumber(1) },
+		{ name: "min 3", expr: "x = math_min(0, 1, 3)", expected: pl2.newNumber(0) },
+		{ name: "min 4", expr: "x = math_min()",        expected: pl2.newNumber(Infinity) },
+		
+		{ name: "clamp 1", expr: "x = math_clamp(0.5, 0, 1)", expected: pl2.newNumber(0.5) },
+		{ name: "clamp 2", expr: "x = math_clamp(-2, 0, 1)",  expected: pl2.newNumber(0) },
+		{ name: "clamp 3", expr: "x = math_clamp(2, 0, 1)",   expected: pl2.newNumber(1) },
+
+		{ name: "sin 1", expr: "x = math_sin(0)",   expected: pl2.newNumber(0) },
+		{ name: "cos 1", expr: "x = math_cos(0)",   expected: pl2.newNumber(1) },
+	];
+
+	for (const test of tests) {
+		addTest("math functions - " + test.name, r => {
+			const result = pl2.interpretCode(test.expr);
+
+			const [val, err] = pl2.evaluateCode("x", result);
+			testEqual(r, err, undefined, test.name);
+			testEqualResult(r, val, test.expected, test.name);
+		});
+	}
 });
 
 addTestGroup("If statements", [], () => {
@@ -328,7 +373,7 @@ addTestGroup("If statements", [], () => {
 			const result = pl2.interpretCode(test.code);
 
 			const [x, err] = pl2.evaluateCode("x", result);
-			testEqual(r, err, null);
+			testEqual(r, err, undefined);
 			testEqualResult(r, x, pl2.newNumber(test.expected));
 		});
 	}
@@ -345,7 +390,7 @@ addTestGroup("If statements", [], () => {
 		`);
 
 		const [x, err] = pl2.evaluateCode("x", result);
-		testEqual(r, err, null);
+		testEqual(r, err, undefined);
 		testEqualResult(r, x, pl2.newNumber(1));
 	});
 });
@@ -354,49 +399,33 @@ addTestGroup("For-Loops", [], () => {
 	const tests = [
 		{
 			name: "range ..<",
-			code: `
-				x = 0
-				for i in 0..<10 {
-					x += 1
-				}
-			`,
-			expected: 10,
+			code: ` for i in 0..<5 { print(i) } `,
+			expected: ["0", "1", "2", "3", "4",],
 		}, {
 			name: "range ..<=",
-			code: `
-				x = 0
-				for i in 0..<=10 {
-					x += 1
-				}
-			`,
-			expected: 11,
+			code: ` for i in 0..<=5 { print(i) } `,
+			expected: ["0", "1", "2", "3", "4","5"],
 		}, {
 			name: "range ..>",
-			code: `
-				x = 0
-				for i in 10..>0 {
-					x += 1
-				}
-			`,
-			expected: 10,
+			code: ` for i in 5..>0 { print(i) } `,
+			expected: ["5", "4", "3", "2", "1", ],
 		}, {
 			name: "range ..>=",
-			code: `
-				x = 0
-				for i in 10..>=0 {
-					x += 1
-				}
-			`,
-			expected: 11,
+			code: ` for i in 5..>=0 { print(i) } `,
+			expected: ["5", "4", "3", "2", "1", "0",],
 		}
 	];
 
 	for (const test of tests) {
 		addTest(test.name, r => {
 			const result = pl2.interpretCode(test.code);
-			const [x, err] = pl2.evaluateCode("x", result);
-			testEqual(r, err, null);
-			testEqualResult(r, x, pl2.newNumber(test.expected));
+			if (testEqual(r, test.expected.length, result.logs.length)) {
+				for (let i = 0; i < test.expected.length; i++) {
+					const expected = test.expected[i];
+					const got = result.logs[i].text;
+					testEqual(r, got, expected);
+				}
+			}
 		})
 	}
 });

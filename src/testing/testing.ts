@@ -243,3 +243,123 @@ function runAllTestsInternal(groups: TestGroup[], debugOnly: boolean) {
 
 	return t;
 }
+
+
+function getDisplayableName(name: string): string {
+	return name.replace(/\s+/g, " ");
+}
+
+export function printTestResult(test: TestResult, depth: number) {
+	if (test.fails) {
+		console.log("  ".repeat(depth + 1), "FAIL", getDisplayableName(test.name));
+		for (const fail of test.fails) {
+			console.log("  ".repeat(depth + 2), fail);
+		}
+	} else {
+		console.log("  ".repeat(depth + 1), "PASS (" + test.checks + ")", getDisplayableName(test.name));
+	}
+}
+
+const MODE_ALL             = 0;
+const MODE_FAILING         = 1;
+const MODE_DEBUGGING       = 2;
+const MODE_FAILING_SUMMARY = 3;
+const MODE_ALL_PASSING     = 4;
+
+export function printResultsInternal(g: TestGroup, depth: number, mode: number) {
+	if ((mode === MODE_FAILING || mode === MODE_FAILING_SUMMARY) && g._fails === 0) {
+		return;
+	}
+
+	if (mode === MODE_DEBUGGING && g._debugging === 0) {
+		return;
+	}
+
+	if (g._fails === 0) {
+		console.log("  ".repeat(depth), "PASS (" + g._checks + ", " + Math.floor(g._time) + "ms)", getDisplayableName(g.name));
+	} else {
+		console.log("  ".repeat(depth), "FAIL (" + g._fails + ", " +  Math.floor(g._time) + "ms)", getDisplayableName(g.name));
+	}
+
+	if (mode === MODE_FAILING || mode === MODE_FAILING_SUMMARY) {
+		if (g.subgroups) {
+			for (const sg of g.subgroups) {
+				if (sg._fails > 0) {
+					printResultsInternal(sg, depth + 1, mode);
+				}
+			}
+		} 
+		if (mode === MODE_FAILING) {
+			if (g.tests) {
+				for (const test of g.tests) {
+					if (test.fails) {
+						printTestResult(test, depth);
+					}
+				}
+			}
+		}
+	} 
+	if (mode === MODE_DEBUGGING) {
+		if (g.subgroups) {
+			for (const sg of g.subgroups) {
+				if (sg._debugging > 0) {
+					printResultsInternal(sg, depth + 1, mode);
+				}
+			}
+		} 
+		if (g.tests) {
+			for (const test of g.tests) {
+				if (test.isDebugging) {
+					printTestResult(test, depth);
+				}
+			}
+		}
+	}
+}
+
+type Accumulator = {
+	failingTests: number;
+}
+
+export function printResults(results: TestContext) {
+	let mode = MODE_ALL_PASSING;
+	let numFails = 0;
+	for (const g of results.groups) {
+		if (g._fails) {
+			numFails += g._fails;
+			mode = MODE_FAILING;
+		}
+		if (g._debugging > 0) {
+			mode = MODE_DEBUGGING;
+			break;
+		}
+	}
+
+	if (mode === MODE_FAILING && numFails > 20) {
+		mode = MODE_FAILING_SUMMARY;
+	}
+
+	if (mode === MODE_DEBUGGING) {
+		console.log("Some tests have been isolated for debug:");
+	} else if (mode === MODE_FAILING) {
+		console.log("Some tests are failing:");
+	} else if (mode === MODE_FAILING_SUMMARY) {
+		console.log(`A LOT of tests are failing (${numFails}) - islotate a test for debug with addTest(..., true <-):`);
+	} else if (mode === MODE_ALL_PASSING) {
+		console.log("All passing");
+	}
+
+	let hasFailures = false;
+	for (const g of results.groups) {
+		if (g._fails) {
+			hasFailures = true;
+			break;
+		}
+	}
+
+	for (const g of results.groups) {
+		printResultsInternal(g, 0, mode);
+	}
+}
+
+
