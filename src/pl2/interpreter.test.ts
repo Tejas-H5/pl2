@@ -175,6 +175,18 @@ addTestGroup("Binary operations", [], () => {
 				testEqualResult(r, x, pl2.newNumber(0));
 			});
 
+			addTest("Shouldn't be able to access variables through function scopes", r => {
+				const result = pl2.interpretCode(`
+					i = 0
+					do_thing = fn() {
+						print(i);
+					}
+					do_thing()
+				`);
+
+				testEqualLogs(r,result, []);
+			});
+
 			addTest("Should be able to mutate variables through return block scopes", r => {
 				const result = pl2.interpretCode(`
 					x = 0
@@ -300,6 +312,8 @@ addTestGroup("Builtin functions", [], () => {
 
 		{ name: "sin 1", expr: "x = math_sin(0)",   expected: pl2.newNumber(0) },
 		{ name: "cos 1", expr: "x = math_cos(0)",   expected: pl2.newNumber(1) },
+
+		{ name: "len string", expr: `x = len("abc")`,   expected: pl2.newNumber(3) },
 	];
 
 	for (const test of tests) {
@@ -463,4 +477,58 @@ addTestGroup("More complicated programs", [], () => {
 			"15 fizzbuzz",
 		]);
 	});
+
+	addTest("Fizz buzz 2", r => {
+		const result = pl2.interpretCode(`
+			for i in 1..<=15 {
+				message = return {
+					if i % 3 == 0 && i % 5 == 0 { return("fizzbuzz") } 
+					if i % 3 == 0 { return("fizz") } 
+					if i % 5 == 0 { return("buzz") }
+					return("")
+				}
+				if len(message) > 0 {
+					print(i, message)
+				}
+			}
+		`);
+
+		testEqualLogs(r, result, [
+			"3 fizz",
+			"5 buzz",
+			"6 fizz",
+			"9 fizz",
+			"10 buzz",
+			"12 fizz",
+			"15 fizzbuzz",
+		]);
+	});
+
+	addTest("Fizz buzz 3", r => {
+		const result = pl2.interpretCode(`
+			get_message = fn(i) {
+				if i % 3 == 0 && i % 5 == 0 { return("fizzbuzz") }
+				if i % 3 == 0 { return("fizz") }
+				if i % 5 == 0 { return("buzz") }
+				return("")
+			}
+
+			for i in 1..<=15 {
+				message = get_message(i)
+				if len(message) > 0 {
+					print(i, message)
+				}
+			}
+		`);
+
+		testEqualLogs(r, result, [
+			"3 fizz",
+			"5 buzz",
+			"6 fizz",
+			"9 fizz",
+			"10 buzz",
+			"12 fizz",
+			"15 fizzbuzz",
+		]);
+	}, true);
 });

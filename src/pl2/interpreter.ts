@@ -1,5 +1,6 @@
-import { assertNever } from "./assert";
+import { assert, assertNever } from "./assert";
 import * as ast from "./ast";
+import { expressionToString } from "./ast";
 import { getBuiltinFn } from "./builtins";
 import { newParser } from "./parser";
 
@@ -11,8 +12,12 @@ export function interpretProgram(program: ast.Program): ProgramIterator {
 
 	for (const expr of program.statements) {
 		const dst = newSlot();
-		if (evaluateExpression(expr, iter, dst) !== RETURN_NONE) break;
+		if (evaluateExpression(expr, iter, dst) !== RETURN_NONE) {
+			break;
+		}
 	}
+
+	assert(iter.scopes.length === 1);
 
 	return iter;
 }
@@ -57,6 +62,7 @@ export type Scope = {
 
 export const SCOPE_ALLOW_CONTINUE_BREAK = 1 << 0;
 export const SCOPE_ISOLATED             = 1 << 1;
+export const SCOPE_HIDDEN               = 1 << 2; 
 export const SCOPE_NON_ISOLATED_FLAGS = SCOPE_ALLOW_CONTINUE_BREAK;
 
 export function newProgramIterator(program: ast.Program): ProgramIterator {
@@ -89,15 +95,40 @@ export function currentScopeNonIsolatedFlags(iter: ProgramIterator): number {
 	return iter.scopes[iter.scopes.length - 1].flags & SCOPE_NON_ISOLATED_FLAGS;
 }
 
+export function getCurrentScope(iter: ProgramIterator): Scope {
+	assert(iter.scopes.length > 0);
+	return iter.scopes[iter.scopes.length - 1];
+}
+
 export function popScope(iter: ProgramIterator) {
 	return iter.scopes.pop();
 }
 
 export function getVar(iter: ProgramIterator, name: string): Result | undefined {
-	for (let i = iter.scopes.length - 1; i >= 0; i--) {
+	if (iter.scopes.length === 0) return undefined;
+
+	for (let i = iter.scopes.length - 1; i > 0; i--) {
 		const scope = iter.scopes[i];
+		if (scope.flags & SCOPE_HIDDEN) {
+			continue;
+		}
+
 		const value = scope.vars.get(name)
-		if (value) return value.result;
+		if (value) {
+			return value.result;
+		}
+
+		if (scope.flags & SCOPE_ISOLATED) {
+			break;
+		}
+	}
+
+	// Also search the global scope - it's available to every other scope
+	{
+		const value = iter.scopes[0].vars.get(name);
+		if (value) {
+			return value.result;
+		}
 	}
 
 	return undefined;
@@ -105,29 +136,40 @@ export function getVar(iter: ProgramIterator, name: string): Result | undefined 
 
 const NIL_SLOT = newSlot();
 
-export function newVar(iter: ProgramIterator, name: string): Slot {
+export function setOrCreateVar(iter: ProgramIterator, name: string): Slot {
 	if (iter.scopes.length === 0) return NIL_SLOT;
 
-	let scope: Scope | undefined;
+	let scopeToUse: Scope | undefined;
 	for (let i = iter.scopes.length - 1; i >= 0; i--) {
-		const iScope = iter.scopes[i];
-		if (iScope.vars.has(name)) {
-			scope = iScope;
+		const scope = iter.scopes[i];
+		if (scope.flags & SCOPE_HIDDEN) {
+			continue;
+		}
+
+		if (scope.vars.has(name)) {
+			scopeToUse = scope;
 			break;
 		}
 
-		if (iScope.flags & SCOPE_ISOLATED) {
+		if (scope.flags & SCOPE_ISOLATED) {
 			break;
 		}
 	}
 
-	if (!scope) {
-		scope = iter.scopes[iter.scopes.length - 1];
+	if (!scopeToUse) {
+		scopeToUse = iter.scopes[iter.scopes.length - 1];
 	}
 
 	const slot = newSlot();
-	scope.vars.set(name, slot);
+	scopeToUse.vars.set(name, slot);
 
+	return slot;
+}
+
+export function createVar(iter: ProgramIterator, name: string): Slot {
+	const scope = getCurrentScope(iter);
+	const slot = newSlot();
+	scope.vars.set(name, slot);
 	return slot;
 }
 
@@ -344,7 +386,8 @@ export function evaluateCode(code: string, iter: ProgramIterator): [Result, stri
 function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
 	let rt: ExprReturn = RETURN_NONE;
 
-	pushScope(iter, SCOPE_ISOLATED); {
+	// Needs to be hidden. When we create new variables in this scope
+	pushScope(iter, SCOPE_HIDDEN); {
 		rt = evaluateFunctionCallInternal(fn, iter, dst);
 	} popScope(iter);
 
@@ -375,10 +418,16 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 			// TODO: argument types, type validation
 
 			const argExpr = fn.arguments[i];
-			const varSlot = newVar(iter, argName);
+			const varSlot = createVar(iter, argName);
 			const rt = evaluateExpression(argExpr, iter, varSlot); // We allow passing "nothing" into functions. Might change my mind later idk
 			if (rt === RETURN_ERR) return setError(dst, varSlot.error);
 		}
+
+		// We only set the isolation flag on the current scope _now_ - we needed to read from the parent scope in order to 
+		// populate the current scope. But the function call itself should have an isolated scope. 
+		const scope = getCurrentScope(iter);
+		scope.flags = scope.flags | SCOPE_ISOLATED;
+		scope.flags = scope.flags & ~SCOPE_HIDDEN;
 
 		return evaluateExpressionBlock(userFn.val.body, iter, dst);
 	}
@@ -387,17 +436,16 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 }
 
 function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator, dst: Slot): ExprReturn {
-	const scopeFlags = currentScopeNonIsolatedFlags(iter);
+	const scope = getCurrentScope(iter);
 
 	for (const expr of block) {
-		if (scopeFlags & SCOPE_ALLOW_CONTINUE_BREAK) {
+		if (scope.flags & SCOPE_ALLOW_CONTINUE_BREAK) {
 			if (expr.type === ast.Expression_Break)    return setResult(dst, BREAK);
 			if (expr.type === ast.Expression_Continue) return setResult(dst, CONTINUE);
 		}
 
 		const rt = evaluateExpression(expr, iter, dst);
-		if (rt === RETURN_ERR)                   return RETURN_ERR;
-		if (expr.type === ast.Expression_Return) return RETURN_VAL;
+		if (rt) return rt;
 	}
 
 	return RETURN_NONE;
@@ -409,14 +457,14 @@ function evaluateIfChain(expr: ast.IfChain, iter: ProgramIterator, dst: Slot): E
 
 	let rt: ExprReturn = RETURN_NONE;
 
-	const scope = pushScope(iter, currentScopeNonIsolatedFlags(iter)); {
-		rt = evaluateIfChainInternal(expr, iter, scope, dst);
+	pushScope(iter, currentScopeNonIsolatedFlags(iter)); {
+		rt = evaluateIfChainInternal(expr, iter, dst);
 	} popScope(iter);
 
 	return rt;
 }
 
-function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, scope: Scope, dst: Slot): ExprReturn {
+function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, dst: Slot): ExprReturn {
 	const check = newSlot();
 
 	for (const branch of expr.blocks) {
@@ -428,7 +476,6 @@ function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, scope
 	}
 
 	if (expr.else) {
-		scope.vars.clear();
 		return evaluateExpressionBlock(expr.else, iter, dst);
 	}
 
@@ -453,7 +500,7 @@ function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterat
 			return setError(dst, `Can't assign to ${ast.expressionToString(iter.program.code, expr)}`);
 		}
 
-		const varSlot = newVar(iter, expr.lhs.name);
+		const varSlot = setOrCreateVar(iter, expr.lhs.name);
 		setResult(varSlot, dst.result);
 		dst.result = NOTHING;
 
@@ -478,8 +525,8 @@ function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperato
 			case ast.OP_LESS_THAN_EQ:    return setResultBoolean(dst, lhs.val <= rhs.val);
 			case ast.OP_GREATER_THAN:    return setResultBoolean(dst, lhs.val > rhs.val);
 			case ast.OP_GREATER_THAN_EQ: return setResultBoolean(dst, lhs.val >= rhs.val);
-			case ast.OP_EQ:              return setResultBoolean(dst, lhs.val == rhs.val);
-			case ast.OP_NOT_EQ:          return setResultBoolean(dst, lhs.val != rhs.val);
+			case ast.OP_EQ:              return setResultBoolean(dst, lhs.val === rhs.val);
+			case ast.OP_NOT_EQ:          return setResultBoolean(dst, lhs.val !== rhs.val);
 			default:                     return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
@@ -489,14 +536,18 @@ function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperato
 			case ast.OP_LOGICAL_AND: return setResultBoolean(dst, lhs.val && rhs.val);
 			case ast.OP_LOGICAL_OR:  return setResultBoolean(dst, lhs.val || rhs.val);
 			case ast.OP_LOGICAL_XOR: return setResultBoolean(dst, lhs.val != rhs.val);
+			case ast.OP_EQ:          return setResultBoolean(dst, lhs.val === rhs.val);
+			case ast.OP_NOT_EQ:      return setResultBoolean(dst, lhs.val !== rhs.val);
 			default:                 return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
 
 	if (lhs.type === Result_String && rhs.type === Result_String) {
 		switch (exprOp) {
-			case ast.OP_ADD: return setResultString(dst, lhs.val + rhs.val);
-			default:         return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+			case ast.OP_ADD:     return setResultString(dst, lhs.val + rhs.val);
+			case ast.OP_EQ:      return setResultBoolean(dst, lhs.val === rhs.val);
+			case ast.OP_NOT_EQ:  return setResultBoolean(dst, lhs.val !== rhs.val);
+			default:             return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
 
@@ -515,16 +566,15 @@ function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator, dst: Sl
 function evaluateForLoop(expr: ast.ForLoop, iter: ProgramIterator, dst: Slot): ExprReturn {
 	let rt: ExprReturn = RETURN_NONE;
 
-	const scope = pushScope(iter, SCOPE_ALLOW_CONTINUE_BREAK); {
-		rt = evaluateForLoopInternal(expr, iter, scope, dst);
+	pushScope(iter, SCOPE_ALLOW_CONTINUE_BREAK); {
+		rt = evaluateForLoopInternal(expr, iter, dst);
 	} popScope(iter);
 
 	return rt;
 }
 
-function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, scope: Scope, dst: Slot): ExprReturn {
-	const loopVarSlot = newVar(iter, expr.range.varName.name);
-
+function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, dst: Slot): ExprReturn {
+	const loopVarSlot = setOrCreateVar(iter, expr.range.varName.name);
 	const rtStart = evaluateExpressionValue(expr.range.start, iter, loopVarSlot);
 	if (rtStart === RETURN_ERR) return setError(dst, loopVarSlot.error);
 	if (loopVarSlot.result.type !== Result_Number) return setError(dst, "For loop range start needs to be a number");

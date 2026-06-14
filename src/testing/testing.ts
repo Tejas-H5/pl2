@@ -249,11 +249,13 @@ function getDisplayableName(name: string): string {
 	return name.replace(/\s+/g, " ");
 }
 
-export function printTestResult(test: TestResult, depth: number) {
+export function printTestResult(test: TestResult, depth: number, mode: number) {
 	if (test.fails) {
 		console.log("  ".repeat(depth + 1), "FAIL", getDisplayableName(test.name));
-		for (const fail of test.fails) {
-			console.log("  ".repeat(depth + 2), fail);
+		if (mode !== MODE_FAILING_SUMMARY) {
+			for (const fail of test.fails) {
+				console.log("  ".repeat(depth + 2), fail);
+			}
 		}
 	} else {
 		console.log("  ".repeat(depth + 1), "PASS (" + test.checks + ")", getDisplayableName(test.name));
@@ -289,12 +291,10 @@ export function printResultsInternal(g: TestGroup, depth: number, mode: number) 
 				}
 			}
 		} 
-		if (mode === MODE_FAILING) {
-			if (g.tests) {
-				for (const test of g.tests) {
-					if (test.fails) {
-						printTestResult(test, depth);
-					}
+		if (g.tests) {
+			for (const test of g.tests) {
+				if (test.fails) {
+					printTestResult(test, depth, mode);
 				}
 			}
 		}
@@ -310,7 +310,7 @@ export function printResultsInternal(g: TestGroup, depth: number, mode: number) 
 		if (g.tests) {
 			for (const test of g.tests) {
 				if (test.isDebugging) {
-					printTestResult(test, depth);
+					printTestResult(test, depth, mode);
 				}
 			}
 		}

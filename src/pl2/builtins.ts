@@ -16,7 +16,10 @@ import {
 	resultToString,
     setError,
     setResultNumber,
-    Slot
+    Slot,
+    Result_String,
+    Result_List,
+    Result_Map
 } from "./interpreter";
 
 export type BuiltinFn = (fn: FunctionCall, iter: ProgramIterator, dst: Slot) => ExprReturn;
@@ -34,6 +37,7 @@ export function getBuiltinFn(name: string): BuiltinFn | undefined {
 		case "math_acos":  return math_acos;
 		case "math_atan":  return math_atan;
 		case "math_atan2": return math_atan2;
+		case "len":        return len;
 		// case "math_log":        return math_log;
 		// case "math_ln":         return math_ln;
 		// case "math_pow":        return math_pow;
@@ -153,7 +157,14 @@ export function math_atan2(call: FunctionCall, iter: ProgramIterator, dst: Slot)
 	if (checkNumArgs(call, "math_atan2", 2, dst))                  return RETURN_ERR;
 	if (evaluateArgumentNumber(call, 0, iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
 	if (evaluateArgumentNumber(call, 1, iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
-
 	return setResultNumber(dst, Math.atan2((iter.temp1.result as ResultNumber).val, (iter.temp2.result as ResultNumber).val))
 }
 
+export function len(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "len", 1, dst)) return RETURN_ERR;
+	if (evaluateExpressionValue(call.arguments[0], iter, dst) === RETURN_ERR) return RETURN_ERR;
+	if (dst.result.type === Result_String) return setResultNumber(dst, dst.result.val.length);
+	if (dst.result.type === Result_List)   return setResultNumber(dst, dst.result.val.length);
+	if (dst.result.type === Result_Map)    return setResultNumber(dst, dst.result.val.size);
+	return setError(dst, "Can't get the length of a " + resultToString(dst.result));
+}
