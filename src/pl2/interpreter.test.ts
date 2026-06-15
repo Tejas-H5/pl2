@@ -442,6 +442,18 @@ addTestGroup("For-Loops", [], () => {
 			name: "range ..>=",
 			code: ` for i in 5..>=0 { print(i) } `,
 			expected: ["5", "4", "3", "2", "1", "0",],
+		}, {
+			name: "iterate list - 1 val",
+			code: `l = list{10, 20, 30} for x in l { print(x)}`,
+			expected: [ "10", "20", "30", ]
+		}, {
+			name: "iterate list - 1 val",
+			code: `l = list{10, 20, 30} for x, i in l { print(x, i)}`,
+			expected: [ "10 0", "20 1", "30 2", ]
+		}, {
+			name: "iterate map",
+			code: `m = map{1=21, 2=32, 3=44} for k, v in m { print(k, v) }`,
+			expected: [ "1 21", "2 32", "3 44", ]
 		}
 	];
 
@@ -585,6 +597,27 @@ addTestGroup("Indexing", [], () => {
 				"11", "21", "31",
 				"12", "22", "32",
 			])
+		});
+	});
+
+	addTestGroup("map", [], () => {
+		addTest("Normal map", r => {
+			const result = pl2.interpretCode(`
+				x = map{
+					1 = 12,
+					2 = 25,
+					4 = 12,
+				}
+				for k, v in x {
+					print(k, v)
+				}
+			`);
+
+			testEqualLogs(r, result, [
+				"1 12",
+				"2 25",
+				"4 12",
+			]);
 		});
 	});
 });

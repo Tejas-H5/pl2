@@ -180,7 +180,7 @@ export const Result_Function = 4;
 export const Result_List     = 5;
 export const Result_Map      = 6;
 
-export function typeToString(type: ResultType) {
+export function resultTypeToString(type: ResultType) {
 	switch(type) {
 		case Result_Nothing:  return "Nothing";
 		case Result_Number:   return "Number";
@@ -308,7 +308,7 @@ export function newString(val: string): ResultString {
 }
 
 export function invalidOperatorError(opType: ast.BinaryOperatorType, lhs: Result, rhs: Result): string {
-	return `${ast.operatorToString(opType)} is not valid for ${typeToString(lhs.type)} with ${typeToString(rhs.type)}`;
+	return `${ast.operatorToString(opType)} is not valid for ${resultTypeToString(lhs.type)} with ${resultTypeToString(rhs.type)}`;
 }
 
 // NOTE: compared by reference. You can't just construct the same object and expect it to work
@@ -363,6 +363,7 @@ export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator, 
 			} popScope(iter);
 			return result;
 		}
+		case ast.Expression_ForLoopRange: return setError(dst, "Can't use a for-loop range outside of a for-loop.");
 		default: {
 			assertNever(expr);
 			return setError(dst, "Could not evaluate expression");
@@ -407,7 +408,7 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 	const functionName = fn.name.name;
 	const userFn = getVar(iter, functionName);
 	if (userFn) {
-		if (userFn.type !== Result_Function) return setError(dst, "Value was not a function - it was a " + typeToString(userFn.type));
+		if (userFn.type !== Result_Function) return setError(dst, "Value was not a function - it was a " + resultTypeToString(userFn.type));
 
 		const wantedNumArgs = userFn.val.args.length;
 		const gotNumArgs    = fn.arguments.length;
@@ -554,7 +555,7 @@ function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperato
 		}
 	}
 
-	return setError(dst, `Can't apply ${ast.operatorToString(exprOp)} between ${typeToString(lhs.type)} and ${typeToString(rhs.type)}`);
+	return setError(dst, `Can't apply ${ast.operatorToString(exprOp)} between ${resultTypeToString(lhs.type)} and ${resultTypeToString(rhs.type)}`);
 }
 
 function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator, dst: Slot): ExprReturn {
@@ -577,59 +578,129 @@ function evaluateForLoop(expr: ast.ForLoop, iter: ProgramIterator, dst: Slot): E
 }
 
 function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, dst: Slot): ExprReturn {
-	const loopVarSlot = setOrCreateVar(iter, expr.range.varName.name);
-	const rtStart = evaluateExpressionValue(expr.range.start, iter, loopVarSlot);
-	if (rtStart === RETURN_ERR) return setError(dst, loopVarSlot.error);
-	if (loopVarSlot.result.type !== Result_Number) return setError(dst, "For loop range start needs to be a number");
+	if (expr.toIterate.type === ast.Expression_ForLoopRange) {
+		if (expr.varNames.length !== 1) return setError(dst, "Range for-loop can only assign to 1 variable");
 
-	const end = newSlot();
+		const range    = expr.toIterate;
+		const rangeVar = expr.varNames[0];
 
-	outer: while (true) {
-		const rtEnd = evaluateExpressionValue(expr.range.end, iter, end);
-		if (rtEnd === RETURN_ERR) return setError(dst, end.error);
-		if (end.result.type !== Result_Number) return setError(dst, "For loop range end needs to be a number");
+		const loopVarSlot = setOrCreateVar(iter, rangeVar.name);
 
-		let endVal = end.result.val;
+		const rtStart = evaluateExpressionValue(range.lo, iter, loopVarSlot);
+		if (rtStart === RETURN_ERR) return setError(dst, loopVarSlot.error);
+		if (loopVarSlot.result.type !== Result_Number) return setError(dst, "For loop range start needs to be a number");
 
-		let nextLoopVal = loopVarSlot.result.val;
+		const end = newSlot();
 
-		switch (expr.range.rangeType) {
-			case ast.RANGE_LT: {
-				if (loopVarSlot.result.val >= endVal) break outer;
-				nextLoopVal += 1;
-			} break;
-			case ast.RANGE_LTE: {
-				if (nextLoopVal > endVal)  break outer;
-				nextLoopVal += 1;
-			} break;
-			case ast.RANGE_GT: {
-				if (nextLoopVal <= endVal) break outer;
-				nextLoopVal -= 1;
-			} break;
-			case ast.RANGE_GTE: {
-				if (nextLoopVal < endVal)  break outer;
-				nextLoopVal -= 1;
-			} break;
-			default: {
-				assertNever(expr.range.rangeType);
+		outer: while (true) {
+			const rtEnd = evaluateExpressionValue(range.hi, iter, end);
+			if (rtEnd === RETURN_ERR) return setError(dst, end.error);
+			if (end.result.type !== Result_Number) return setError(dst, "For loop range end needs to be a number");
+
+			let endVal = end.result.val;
+
+			let nextLoopVal = loopVarSlot.result.val;
+
+			switch (range.rangeType) {
+				case ast.RANGE_LT: {
+					if (loopVarSlot.result.val >= endVal) break outer;
+					nextLoopVal += 1;
+				} break;
+				case ast.RANGE_LTE: {
+					if (nextLoopVal > endVal)  break outer;
+					nextLoopVal += 1;
+				} break;
+				case ast.RANGE_GT: {
+					if (nextLoopVal <= endVal) break outer;
+					nextLoopVal -= 1;
+				} break;
+				case ast.RANGE_GTE: {
+					if (nextLoopVal < endVal)  break outer;
+					nextLoopVal -= 1;
+				} break;
+				default: {
+					assertNever(range.rangeType);
+				}
 			}
+
+			const rt = evaluateExpressionBlock(expr.statements, iter, dst);
+			if (rt === RETURN_ERR) return RETURN_ERR;
+			if (rt === RETURN_VAL) {
+				if (dst.result === BREAK) return setResult(dst, NOTHING);
+				if (dst.result === CONTINUE) {
+					setResult(dst, NOTHING);
+					loopVarSlot.result.val = nextLoopVal;
+					continue;
+				}
+			}
+
+			loopVarSlot.result.val = nextLoopVal;
 		}
 
-		const rt = evaluateExpressionBlock(expr.statements, iter, dst);
-		if (rt === RETURN_ERR) return RETURN_ERR;
-		if (rt === RETURN_VAL) {
-			if (dst.result === BREAK) return setResult(dst, NOTHING);
-			if (dst.result === CONTINUE) {
-				setResult(dst, NOTHING);
-				loopVarSlot.result.val = nextLoopVal;
-				continue;
-			}
-		}
-
-		loopVarSlot.result.val = nextLoopVal;
+		return RETURN_NONE;
 	}
 
-	return RETURN_NONE;
+	if (evaluateExpression(expr.toIterate, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	const toIterate = dst.result;
+	if (toIterate.type === Result_List) {
+		if (expr.varNames.length !== 1 && expr.varNames.length !== 2) {
+			return setError(dst, "List iterator needs 1 or 2 loop vars (val, idx)");
+		}
+
+		const list = toIterate.val;
+		for (let i = 0; i < list.length; i++) {
+			const val = list[i];
+
+			const valSlot = setOrCreateVar(iter, expr.varNames[0].name);
+			setResult(valSlot, val);
+
+			if (expr.varNames.length === 2) {
+				const idxSlot = setOrCreateVar(iter, expr.varNames[1].name);
+				setResultNumber(idxSlot, i);
+			}
+
+			const rt = evaluateExpressionBlock(expr.statements, iter, dst);
+			if (rt === RETURN_ERR) return RETURN_ERR;
+			if (rt === RETURN_VAL) {
+				if (dst.result === BREAK) return setResult(dst, NOTHING);
+				if (dst.result === CONTINUE) {
+					setResult(dst, NOTHING);
+					continue;
+				}
+			}
+		}
+
+		return RETURN_NONE;
+	} 
+
+	if (toIterate.type === Result_Map) {
+		if (expr.varNames.length !== 2) {
+			return setError(dst, "List iterator needs 2 loop vars (k, v)");
+		}
+
+		const map = toIterate.val;
+		for (const [, v] of map) {
+			const kSlot = setOrCreateVar(iter, expr.varNames[0].name);
+			setResult(kSlot, v.key);
+
+			const vSlot = setOrCreateVar(iter, expr.varNames[1].name);
+			setResult(vSlot, v.val);
+
+			const rt = evaluateExpressionBlock(expr.statements, iter, dst);
+			if (rt === RETURN_ERR) return RETURN_ERR;
+			if (rt === RETURN_VAL) {
+				if (dst.result === BREAK) return setResult(dst, NOTHING);
+				if (dst.result === CONTINUE) {
+					setResult(dst, NOTHING);
+					continue;
+				}
+			}
+		}
+
+		return RETURN_NONE;
+	}
+
+	return setError(dst, "Can't iterate an expression of type " + resultTypeToString(toIterate.type));
 }
 
 function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator, dst: Slot): ExprReturn {
@@ -663,7 +734,7 @@ function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator, dst: Slot): E
 		return setResult(dst, val.val);
 	}
 
-	return setError(dst, typeToString(targetResult.type) + " cannot be indexed");
+	return setError(dst, resultTypeToString(targetResult.type) + " cannot be indexed");
 }
 
 function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator, dst: Slot): ExprReturn {
@@ -698,7 +769,7 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 				if (evaluateExpression(arg.lhs, iter, slotKey) === RETURN_ERR) return setError(dst, slotKey.error);
 				const mapKey = getMapKey(slotKey.result)
 				if (mapKey === undefined) {
-					return setError(dst, `type ${typeToString(slotKey.result.type)} can't be used as a map key`);
+					return setError(dst, `type ${resultTypeToString(slotKey.result.type)} can't be used as a map key`);
 				}
 
 				if (evaluateExpression(arg.rhs, iter, slotVal) === RETURN_ERR) return setError(dst, slotVal.error);

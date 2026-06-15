@@ -9,7 +9,8 @@ import {
 	newParser,
 	Parser,
 	parserPos,
-	reachedEnd
+	reachedEnd,
+    reset
 } from "./parser";
 import { isDigit, isLetter, isWhitespace } from "./string-utils";
 import { TextPosition } from "./text-pos";
@@ -105,6 +106,7 @@ export const Expression_Break              = 12;
 export const Expression_ReturnBlock        = 13; // I have wanted this construct in every language I have ever used, but I've never seen it. :)
 export const Expression_BooleanLiteral     = 14;
 export const Expression_Indexer            = 15;
+export const Expression_ForLoopRange       = 16;
 
 export function expressionTypeToString(type: ExpressionType): string {
 	switch (type) {
@@ -161,14 +163,15 @@ export type IfChain = ExpressionBase & {
 
 export type ForLoop = ExpressionBase & {
 	type: typeof Expression_ForLoop;
-	range: ForLoopRange;
+	varNames: Identifier[];
+	toIterate: Expression;
 	statements: Expression[];
 }
 
-export type ForLoopRange = {
-	varName:   Identifier;
-	start:     Expression;
-	end:       Expression;
+export type ForLoopRange = ExpressionBase & {
+	type: typeof Expression_ForLoopRange;
+	lo: Expression;
+	hi: Expression;
 	rangeType: ForLoopRangeType;
 };
 
@@ -266,6 +269,7 @@ export type Expression =
  | ReturnStatementBlock
  | LoopControlFlowLabel
  | Indexer
+ | ForLoopRange
  ;
 
 export function expressionToString(code: string, expr: Expression): string {
@@ -503,27 +507,71 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 
 	if (!compareAndAdvance(parser, "for")) return;
 
-	parseWhitespace(parser)
-	const varName = parseIdentifier(parser);
-	if (!varName) {
-		// TODO: error
-		return undefined;
+	const varNames: Identifier[] = [];
+
+	while (true) {
+		parseWhitespace(parser)
+		const varName = parseIdentifier(parser);
+		if (!varName) {
+			// TODO: error here
+			return undefined;
+		}
+
+		varNames.push(varName);
+
+		parseWhitespace(parser)
+		if (compareCurrentWithWordBoundary(parser, "in")) {
+			advanceBy(parser, 2);
+			break;
+		}
+
+		parseWhitespace(parser)
+		if (!compareAndAdvance(parser, ",")) {
+			// TODO: error here
+			return undefined;
+		}
+
+		if (!varName) {
+			// TODO: error
+			return undefined;
+		}
 	}
 
-	parseWhitespace(parser)
-	if (!compareAndAdvance(parser, "in ")) {
-		// TODO: error
-		return undefined;
-	}
-
-	const initial = parseExpression(parser);
-	if (!initial) {
+	parseWhitespace(parser);
+	let lowOrIterator = parseExpression(parser);
+	if (!lowOrIterator) {
 		// TODO: error
 		return undefined;
 	}
 
 	parseWhitespace(parser);
+	const rangeExprStart = parserPos(parser);
+	let rangeExprOrIterator = parseForLoopRange(parser, lowOrIterator);
+	if (rangeExprOrIterator) {
+		lowOrIterator = rangeExprOrIterator;
+	} else {
+		reset(parser, rangeExprStart);
+	}
 
+	parseWhitespace(parser);
+
+	const block = parseCodeBlock(parser);
+	if (!block) {
+		// TODO: error
+		return undefined;
+	}
+
+	return {
+		type: Expression_ForLoop,
+		start: pos,
+		end:   parserPos(parser),
+		varNames:   varNames,
+		toIterate:  lowOrIterator,
+		statements: block,
+	};
+}
+
+function parseForLoopRange(parser: Parser, lo: Expression): ForLoopRange | undefined {
 	let rangeType: ForLoopRangeType;
 	if (compareAndAdvance(parser, "..<=")) {
 		rangeType = RANGE_LTE;
@@ -540,30 +588,19 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 
 	parseWhitespace(parser);
 
-	const target = parseExpression(parser);
-	if (!target) {
-		// TODO: error
-		return undefined;
-	}
-
-	parseWhitespace(parser);
-	const block = parseCodeBlock(parser);
-	if (!block) {
+	const hi = parseExpression(parser);
+	if (!hi) {
 		// TODO: error
 		return undefined;
 	}
 
 	return {
-		type: Expression_ForLoop,
-		start: pos,
+		type: Expression_ForLoopRange,
+		start: lo.start,
 		end:   parserPos(parser),
-		range: {
-			varName:   varName,
-			start:   initial,
-			end:    target,
-			rangeType: rangeType,
-		},
-		statements: block,
+		lo:    lo,
+		hi:    hi,
+		rangeType: rangeType,
 	};
 }
 

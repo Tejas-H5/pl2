@@ -19,7 +19,8 @@ import {
     Slot,
     Result_String,
     Result_List,
-    Result_Map
+    Result_Map,
+    resultTypeToString
 } from "./interpreter";
 
 export type BuiltinFn = (fn: FunctionCall, iter: ProgramIterator, dst: Slot) => ExprReturn;
@@ -166,5 +167,5 @@ export function len(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprR
 	if (dst.result.type === Result_String) return setResultNumber(dst, dst.result.val.length);
 	if (dst.result.type === Result_List)   return setResultNumber(dst, dst.result.val.length);
 	if (dst.result.type === Result_Map)    return setResultNumber(dst, dst.result.val.size);
-	return setError(dst, "Can't get the length of a " + resultToString(dst.result));
+	return setError(dst, "Can't get the length of a " + resultTypeToString(dst.result.type));
 }

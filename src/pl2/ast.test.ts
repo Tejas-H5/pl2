@@ -121,14 +121,32 @@ addTestGroup("For loops", [ast.parseForLoop], () => {
 		const expr = ast.parseExpressionFromText("for i in a..<b {}");
 		testAssert(r, !!expr, "0")
 		testAssert(r, expr.type === ast.Expression_ForLoop, "1")
-		testEqual(r, expr.range.rangeType, ast.RANGE_LT);
+		testEqual(r, expr.varNames.length, 1);
+		test(r, isIdentifier(expr.varNames[0], "i"));
+		testAssert(r, expr.toIterate.type === ast.Expression_ForLoopRange);
+		test(r, isIdentifier(expr.toIterate.lo, "a"))
+		test(r, isIdentifier(expr.toIterate.hi, "b"))
+		testEqual(r, expr.toIterate.rangeType, ast.RANGE_LT)
 	});
 
 	addTest("lte", r => {
 		const expr = ast.parseExpressionFromText("for i in a..>=b {}");
 		testAssert(r, !!expr, "0")
 		testAssert(r, expr.type === ast.Expression_ForLoop, "1")
-		testEqual(r, expr.range.rangeType, ast.RANGE_GTE);
+		testEqual(r, expr.varNames.length, 1);
+		test(r, isIdentifier(expr.varNames[0], "i"));
+		testAssert(r, expr.toIterate.type === ast.Expression_ForLoopRange);
+		test(r, isIdentifier(expr.toIterate.lo, "a"))
+		test(r, isIdentifier(expr.toIterate.hi, "b"))
+		testEqual(r, expr.toIterate.rangeType, ast.RANGE_GTE)
+	});
+
+	addTest("iterate item", r => {
+		const expr = ast.parseExpressionFromText("for i in list{1, 2, 3} {}");
+		testAssert(r, !!expr, "0")
+		testAssert(r, expr.type === ast.Expression_ForLoop);
+		testEqual(r, expr.varNames.length, 1);
+		testAssert(r, expr.toIterate.type === ast.Expression_TypeInitializer, ast.expressionTypeToString(expr.toIterate.type));
 	});
 })
 
