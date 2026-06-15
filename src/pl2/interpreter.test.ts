@@ -549,40 +549,42 @@ addTestGroup("More complicated programs", [], () => {
 });
 
 addTestGroup("Indexing", [], () => {
-	addTest("list", r => {
-		const result = pl2.interpretCode(`
-			x = list{10, 20, 30}
-			for i in 0..<len(x) {
-				print(x[i])
-			}
-		`);
-
-		testEqualLogs(r, result, [
-			"10",
-			"20",
-			"30",
-		])
-	});
-
-	addTest("double-list", r => {
-		const result = pl2.interpretCode(`
-			x = list{
-				list{10, 20, 30},
-				list{11, 21, 31},
-				list{12, 22, 32},
-			}
-			for i in 0..<len(x) {
-				row = x[i]
-				for j in 0..<len(row) {
-					print(row[j])
+	addTestGroup("list", [], () => {
+		addTest("Single list", r => {
+			const result = pl2.interpretCode(`
+				x = list{10, 20, 30}
+				for i in 0..<len(x) {
+					print(x[i])
 				}
-			}
-		`);
+			`);
 
-		testEqualLogs(r, result, [
-			"10", "20", "30",
-			"11", "21", "31",
-			"12", "22", "32",
-		])
+			testEqualLogs(r, result, [
+				"10",
+				"20",
+				"30",
+			])
+		});
+
+		addTest("double-list", r => {
+			const result = pl2.interpretCode(`
+				x = list{
+					list{10, 20, 30},
+					list{11, 21, 31},
+					list{12, 22, 32},
+				}
+				for i in 0..<len(x) {
+					row = x[i]
+					for j in 0..<len(row) {
+						print(row[j])
+					}
+				}
+			`);
+
+			testEqualLogs(r, result, [
+				"10", "20", "30",
+				"11", "21", "31",
+				"12", "22", "32",
+			])
+		});
 	});
 });
