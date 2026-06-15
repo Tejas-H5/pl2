@@ -1,6 +1,5 @@
 import { assert, assertNever } from "./assert";
 import * as ast from "./ast";
-import { expressionToString } from "./ast";
 import { getBuiltinFn } from "./builtins";
 import { newParser } from "./parser";
 
@@ -231,9 +230,12 @@ export type ResultList = ResultBase & {
 	val: Result[];
 }
 
+
+export type ValidMapKey = number | string | object | boolean;
+
 export type ResultMap = ResultBase & {
 	type: typeof Result_Map;
-	val: Map<number, { key: Result, val: Result }>;
+	val: Map<ValidMapKey, { key: Result, val: Result }>;
 }
 
 export type ResultNothing = ResultBase & {
@@ -338,6 +340,7 @@ export type ExprNoReturn =
 export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator, dst: Slot): ExprReturn {
 	switch (expr.type) {
 		case ast.Expression_Identifier:         return evaluateIdentifier(expr, iter, dst);
+		case ast.Expression_Indexer:            return evaluateIndexer(expr, iter, dst);
 		case ast.Expression_BinaryExpression:   return evaluateBinaryOperation(expr, iter, dst);
 		case ast.Expression_FunctionCall:       return evaluateFunctionCall(expr, iter, dst);
 		case ast.Expression_IfChain:            return evaluateIfChain(expr, iter, dst); 
@@ -629,6 +632,40 @@ function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, dst: 
 	return RETURN_NONE;
 }
 
+function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator, dst: Slot): ExprReturn {
+	const targetDst = iter.temp1;
+	if (evaluateExpression(expr.index, iter, dst) === RETURN_ERR)        return RETURN_ERR;
+	if (evaluateExpression(expr.target, iter, targetDst) === RETURN_ERR) return setError(dst, targetDst.error);
+
+	const indexResult = dst.result
+	const targetResult = targetDst.result;
+
+	if (targetResult.type === Result_List) {
+		if (indexResult.type !== Result_Number) {
+			return setError(dst, "List indexer needs to be a number");
+		}
+		const index = Math.floor(indexResult.val);
+		if (index < 0 || index >= targetResult.val.length) {
+			return setError(dst, "Index was out of bounds: " + index + "/" + targetResult.val.length);
+		}
+		const value = targetResult.val[index];
+		return setResult(dst, value);
+	}
+
+	if (targetResult.type === Result_Map) {
+		const key = getMapKey(indexResult);
+		if (key === undefined) {
+			return setError(dst, "Invalid map key");
+		}
+
+		const val = targetResult.val.get(key);
+		if (val === undefined) return setResult(dst, NOTHING);
+		return setResult(dst, val.val);
+	}
+
+	return setError(dst, typeToString(targetResult.type) + " cannot be indexed");
+}
+
 function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator, dst: Slot): ExprReturn {
 	switch (expr.typename.name) {
 		case "list": {
@@ -659,16 +696,16 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 				} 
 				
 				if (evaluateExpression(arg.lhs, iter, slotKey) === RETURN_ERR) return setError(dst, slotKey.error);
-				if (!isHashable(slotKey.result)) {
+				const mapKey = getMapKey(slotKey.result)
+				if (mapKey === undefined) {
 					return setError(dst, `type ${typeToString(slotKey.result.type)} can't be used as a map key`);
 				}
 
 				if (evaluateExpression(arg.rhs, iter, slotVal) === RETURN_ERR) return setError(dst, slotVal.error);
 
-				const mapKey = getMapKey(slotKey.result)
 				if (result.val.has(mapKey)) return setError(dst, "Map initializer cannot contain duplicate keys");
 
-				const slot = { key: mapKey, val: cloneResult(slotVal.result) };
+				const slot = { key: slotKey.result, val: cloneResult(slotVal.result) };
 				result.val.set(mapKey, slot);
 			}
 
@@ -679,24 +716,15 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 	return setError(dst, `Don't know how to initialize this type: ${expr.typename.name}`);
 }
 
-export function isHashable(result: Result): boolean {
-	switch (result.type) {
-		case Result_Nothing:  return true;
-		case Result_Number:   return true;
-		case Result_String:   return true;
-		case Result_Boolean:  return true;
-	}
 
-	return false;
-}
-
-export function getMapKey(result: Result): any {
+export function getMapKey(result: Result): ValidMapKey | undefined {
 	switch (result.type) {
 		case Result_Nothing:  return NOTHING;
 		case Result_Number:   return result.val;
 		case Result_String:   return result.val;
 		case Result_Boolean:  return result.val;
 	}
+	return undefined;
 }
 
 export function resultToString(result: Result): string {
@@ -713,3 +741,4 @@ export function resultToString(result: Result): string {
 	}
 	return "unknown string representation";
 }
+

@@ -1,5 +1,16 @@
 import { assert, assertNever } from "./assert";
-import {advance, advanceBy, advanceToNextNewLine, compareCurrent, compareCurrentWithWordBoundary, currentChar, newParser, Parser, parserPos, reachedEnd } from "./parser";
+import {
+	advance,
+	advanceBy,
+	advanceToNextNewLine,
+	compareCurrent,
+	compareCurrentWithWordBoundary,
+	currentChar,
+	newParser,
+	Parser,
+	parserPos,
+	reachedEnd
+} from "./parser";
 import { isDigit, isLetter, isWhitespace } from "./string-utils";
 import { TextPosition } from "./text-pos";
 
@@ -93,6 +104,7 @@ export const Expression_Continue           = 11;
 export const Expression_Break              = 12;
 export const Expression_ReturnBlock        = 13; // I have wanted this construct in every language I have ever used, but I've never seen it. :)
 export const Expression_BooleanLiteral     = 14;
+export const Expression_Indexer            = 15;
 
 export function expressionTypeToString(type: ExpressionType): string {
 	switch (type) {
@@ -182,6 +194,12 @@ export type BooleanLiteral = ExpressionBase & {
 	val: boolean;
 };
 
+export type Indexer = ExpressionBase & {
+	type: typeof Expression_Indexer;
+	target: Expression;
+	index: Expression;
+};
+
 export type FunctionArgument = {
 	name: Identifier;
 	// TODO: type: TypeExpression. I was originally thinking of just leaving everything untyped.
@@ -247,6 +265,7 @@ export type Expression =
  | ReturnStatement
  | ReturnStatementBlock
  | LoopControlFlowLabel
+ | Indexer
  ;
 
 export function expressionToString(code: string, expr: Expression): string {
@@ -384,7 +403,7 @@ export function parseGroup(parser: Parser): Expression | undefined {
 	return expr;
 }
 
-function compareCurrentAndAdvance(parser: Parser, keyword: string): boolean {
+function compareAndAdvance(parser: Parser, keyword: string): boolean {
 	if (!compareCurrent(parser, keyword)) return false;
 	advanceBy(parser, keyword.length);
 	return true;
@@ -425,7 +444,7 @@ function parseCodeBlock(parser: Parser, pastFirstCurlyBrace = false): Expression
 }
 
 export function parseIfChain(parser: Parser): IfChain | undefined {
-	if (!compareCurrentAndAdvance(parser, "if")) return;
+	if (!compareAndAdvance(parser, "if")) return;
 	parseWhitespace(parser);
 
 	const start = parserPos(parser);
@@ -449,13 +468,13 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 		blocks.push({ check, block });
 
 		parseWhitespace(parser);
-		if (!compareCurrentAndAdvance(parser, "else ")) {
+		if (!compareAndAdvance(parser, "else ")) {
 			break;
 		}
 
 		// Parse the if of the next statement.
 		parseWhitespace(parser);
-		if (!compareCurrentAndAdvance(parser, "if ")) {
+		if (!compareAndAdvance(parser, "if ")) {
 			// Final block doesn't have an if, but it does have an else.
 			
 			const elseBlock = parseCodeBlock(parser);
@@ -482,7 +501,7 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 export function parseForLoop(parser: Parser): ForLoop | undefined {
 	const pos = parserPos(parser);
 
-	if (!compareCurrentAndAdvance(parser, "for")) return;
+	if (!compareAndAdvance(parser, "for")) return;
 
 	parseWhitespace(parser)
 	const varName = parseIdentifier(parser);
@@ -492,7 +511,7 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 	}
 
 	parseWhitespace(parser)
-	if (!compareCurrentAndAdvance(parser, "in ")) {
+	if (!compareAndAdvance(parser, "in ")) {
 		// TODO: error
 		return undefined;
 	}
@@ -506,13 +525,13 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 	parseWhitespace(parser);
 
 	let rangeType: ForLoopRangeType;
-	if (compareCurrentAndAdvance(parser, "..<=")) {
+	if (compareAndAdvance(parser, "..<=")) {
 		rangeType = RANGE_LTE;
-	} else if (compareCurrentAndAdvance(parser, "..<")) {
+	} else if (compareAndAdvance(parser, "..<")) {
 		rangeType = RANGE_LT;
-	} else if (compareCurrentAndAdvance(parser, "..>=")) {
+	} else if (compareAndAdvance(parser, "..>=")) {
 		rangeType = RANGE_GTE;
-	} else if (compareCurrentAndAdvance(parser, "..>")) {
+	} else if (compareAndAdvance(parser, "..>")) {
 		rangeType = RANGE_GT;
 	} else {
 		// ERROR
@@ -548,7 +567,7 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 	};
 }
 
-export function parseSingularExpression(parser: Parser): Expression | undefined {
+export function parseSingularExpressionInternal(parser: Parser): Expression | undefined {
 	parseWhitespace(parser);
 
 	// Most keywords here will be followed by a symbol or space.
@@ -562,16 +581,16 @@ export function parseSingularExpression(parser: Parser): Expression | undefined 
 	// }
 	// but I don't really care
 
-	if (compareCurrent(parser, "(")) { return parseGroup(parser); }
-	if (compareCurrentWithWordBoundary(parser, "fn")) { return parseFunctionDefinition(parser) }
-	if (compareCurrentWithWordBoundary(parser, "if")) { return parseIfChain(parser); }
-	if (compareCurrentWithWordBoundary(parser, "for")) { return parseForLoop(parser) }
+	if (compareCurrent(parser, "("))                      { return parseGroup(parser); }
+	if (compareCurrentWithWordBoundary(parser, "fn"))     { return parseFunctionDefinition(parser) }
+	if (compareCurrentWithWordBoundary(parser, "if"))     { return parseIfChain(parser); }
+	if (compareCurrentWithWordBoundary(parser, "for"))    { return parseForLoop(parser) }
 	if (compareCurrentWithWordBoundary(parser, "return")) { return parseAnyReturnStatement(parser); }
 
-	if (compareCurrentWithWordBoundary(parser, "true"))  { return parseBooleanLiteral(parser, true); }
-	if (compareCurrentWithWordBoundary(parser, "false")) { return parseBooleanLiteral(parser, false); }
-	if (canParseNumberLiteral(parser))                  { return parseNumberLiteral(parser); }
-	if (currentChar(parser) === "\"")                   { return parseStringLiteral(parser); }
+	if (compareCurrentWithWordBoundary(parser, "true"))   { return parseBooleanLiteral(parser, true); }
+	if (compareCurrentWithWordBoundary(parser, "false"))  { return parseBooleanLiteral(parser, false); }
+	if (canParseNumberLiteral(parser))                    { return parseNumberLiteral(parser); }
+	if (currentChar(parser) === "\"")                     { return parseStringLiteral(parser); }
 
 	// Identifier, or function, or data initializer. Do this _after_ keywords.
 	if (isLetter(currentChar(parser))) {
@@ -606,6 +625,21 @@ export function parseSingularExpression(parser: Parser): Expression | undefined 
 	}
 
 	return undefined;
+}
+
+export function parseSingularExpression(parser: Parser): Expression | undefined {
+	let expr = parseSingularExpressionInternal(parser);
+	if (!expr) {
+		return undefined;
+	}
+
+	parseWhitespace(parser);
+	const indexer = parseIndexerExpression(parser, expr);
+	if (indexer) {
+		expr = indexer;
+	}
+
+	return expr;
 }
 
 export function parseReturnStatementInternal(parser: Parser): ReturnStatement | undefined {
@@ -647,12 +681,12 @@ export function parseReturnStatementBlockInternal(parser: Parser): ReturnStateme
 }
 
 export function parseAnyReturnStatement(parser: Parser): ReturnStatement | ReturnStatementBlock | undefined {
-	if (!compareCurrentAndAdvance(parser, "return")) return undefined;
+	if (!compareAndAdvance(parser, "return")) return undefined;
 	parseWhitespace(parser);
-	if (compareCurrentAndAdvance(parser, "(")) {
+	if (compareAndAdvance(parser, "(")) {
 		return parseReturnStatementInternal(parser);
 	}
-	if (compareCurrentAndAdvance(parser, "{")) {
+	if (compareAndAdvance(parser, "{")) {
 		return parseReturnStatementBlockInternal(parser);
 	}
 	return undefined;
@@ -739,6 +773,35 @@ export function parseExpression(parser: Parser): Expression | undefined {
 	return expr;
 }
 
+export function parseIndexerExpression(parser: Parser, expr: Expression): Expression | undefined {
+	const pos = parserPos(parser);
+
+	while (true) {
+		if (!compareAndAdvance(parser, "[")) return expr;
+		parseWhitespace(parser);
+
+		const indexExpr = parseExpression(parser);
+		if (!indexExpr) {
+			// TODO: error - expected expression here
+			return undefined;
+		}
+		parseWhitespace(parser);
+		if (!compareAndAdvance(parser, "]")) {
+			// TODO: error - expected closing bracket here
+			return undefined;
+		}
+
+		parseWhitespace(parser);
+
+		expr = {
+			type:   Expression_Indexer,
+			start:  pos,
+			end:    parserPos(parser),
+			index:  indexExpr,
+			target: expr
+		};
+	}
+}
 
 export function getOpLevel(op: BinaryOperatorType): number {
 	// The binary-expression tree has levels defined by operators.
@@ -1127,9 +1190,9 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 	parseWhitespace(parser);
 	const pos = parserPos(parser);
 
-	if (!compareCurrentAndAdvance(parser, "fn")) return;
+	if (!compareAndAdvance(parser, "fn")) return;
 	parseWhitespace(parser);
-	if (!compareCurrentAndAdvance(parser, "(")) return;
+	if (!compareAndAdvance(parser, "(")) return;
 	parseWhitespace(parser);
 
 	const args: FunctionArgument[] = [];

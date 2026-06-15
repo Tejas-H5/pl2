@@ -453,82 +453,136 @@ addTestGroup("For-Loops", [], () => {
 	}
 });
 
-addTestGroup("More complicated programs", [], () => {
-	addTest("Fizz buzz", r => {
-		const result = pl2.interpretCode(`
-			for i in 1..<=15 {
-				if i % 3 == 0 && i % 5 == 0 {
-					print(i, "fizzbuzz")
-				} else if i % 3 == 0 {
-					print(i, "fizz")
-				} else if i % 5 == 0 {
-					print(i, "buzz")
+addTestGroup("Data structures", [], () => {
+	addTestGroup("Lists", [], () => {
+		addTest("Basic ops", r => {
+			const result = pl2.interpretCode(`
+				x := list{0, 1, 2}
+				for i in 0..<len(x) {
+					print(i, x[i]);
 				}
-			}
-		`);
-
-		testEqualLogs(r, result, [
-			"3 fizz",
-			"5 buzz",
-			"6 fizz",
-			"9 fizz",
-			"10 buzz",
-			"12 fizz",
-			"15 fizzbuzz",
-		]);
+			`);
+		});
 	});
+});
 
-	addTest("Fizz buzz 2", r => {
-		const result = pl2.interpretCode(`
-			for i in 1..<=15 {
-				message = return {
-					if i % 3 == 0 && i % 5 == 0 { return("fizzbuzz") } 
-					if i % 3 == 0 { return("fizz") } 
+addTestGroup("More complicated programs", [], () => {
+	addTestGroup("Fizz buzz versions", [], () => {
+		addTest("Fizz buzz", r => {
+			const result = pl2.interpretCode(`
+				for i in 1..<=15 {
+					if i % 3 == 0 && i % 5 == 0 {
+						print(i, "fizzbuzz")
+					} else if i % 3 == 0 {
+						print(i, "fizz")
+					} else if i % 5 == 0 {
+						print(i, "buzz")
+					}
+				}
+			`);
+
+			testEqualLogs(r, result, [
+				"3 fizz",
+				"5 buzz",
+				"6 fizz",
+				"9 fizz",
+				"10 buzz",
+				"12 fizz",
+				"15 fizzbuzz",
+			]);
+		});
+
+		addTest("Fizz buzz 2", r => {
+			const result = pl2.interpretCode(`
+				for i in 1..<=15 {
+					message = return {
+						if i % 3 == 0 && i % 5 == 0 { return("fizzbuzz") } 
+						if i % 3 == 0 { return("fizz") } 
+						if i % 5 == 0 { return("buzz") }
+						return("")
+					}
+					if len(message) > 0 {
+						print(i, message)
+					}
+				}
+			`);
+
+			testEqualLogs(r, result, [
+				"3 fizz",
+				"5 buzz",
+				"6 fizz",
+				"9 fizz",
+				"10 buzz",
+				"12 fizz",
+				"15 fizzbuzz",
+			]);
+		});
+
+		addTest("Fizz buzz 3", r => {
+			const result = pl2.interpretCode(`
+				get_message = fn(i) {
+					if i % 3 == 0 && i % 5 == 0 { return("fizzbuzz") }
+					if i % 3 == 0 { return("fizz") }
 					if i % 5 == 0 { return("buzz") }
 					return("")
 				}
-				if len(message) > 0 {
-					print(i, message)
+
+				for i in 1..<=15 {
+					message = get_message(i)
+					if len(message) > 0 {
+						print(i, message)
+					}
 				}
+			`);
+
+			testEqualLogs(r, result, [
+				"3 fizz",
+				"5 buzz",
+				"6 fizz",
+				"9 fizz",
+				"10 buzz",
+				"12 fizz",
+				"15 fizzbuzz",
+			]);
+		});
+	});
+});
+
+addTestGroup("Indexing", [], () => {
+	addTest("list", r => {
+		const result = pl2.interpretCode(`
+			x = list{10, 20, 30}
+			for i in 0..<len(x) {
+				print(x[i])
 			}
 		`);
 
 		testEqualLogs(r, result, [
-			"3 fizz",
-			"5 buzz",
-			"6 fizz",
-			"9 fizz",
-			"10 buzz",
-			"12 fizz",
-			"15 fizzbuzz",
-		]);
+			"10",
+			"20",
+			"30",
+		])
 	});
 
-	addTest("Fizz buzz 3", r => {
+	addTest("double-list", r => {
 		const result = pl2.interpretCode(`
-			get_message = fn(i) {
-				if i % 3 == 0 && i % 5 == 0 { return("fizzbuzz") }
-				if i % 3 == 0 { return("fizz") }
-				if i % 5 == 0 { return("buzz") }
-				return("")
+			x = list{
+				list{10, 20, 30},
+				list{11, 21, 31},
+				list{12, 22, 32},
 			}
-
-			for i in 1..<=15 {
-				message = get_message(i)
-				if len(message) > 0 {
-					print(i, message)
+			for i in 0..<len(x) {
+				row = x[i]
+				for j in 0..<len(row) {
+					print(row[j])
 				}
 			}
 		`);
 
 		testEqualLogs(r, result, [
-			"3 fizz",
-			"5 buzz",
-			"6 fizz",
-			"9 fizz",
-			"10 buzz",
-			"12 fizz",
-			"15 fizzbuzz",
-		]);
-	}, true);
+			"10", "20", "30",
+			"11", "21", "31",
+			"12", "22", "32",
+		])
+	});
 });

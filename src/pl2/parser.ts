@@ -51,7 +51,7 @@ export function compareCurrentWithWordBoundary(r: Parser, str: string): boolean 
 		return true;
 	}
 
-	return false;
+		return false;
 }
 
 // TODO: WE NEED TO HANDLE THE RETURN VALUE !!!
