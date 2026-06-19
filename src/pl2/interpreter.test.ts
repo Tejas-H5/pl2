@@ -319,9 +319,10 @@ addTestGroup("Binary operations", [], () => {
 		}
 	});
 
-	addTestGroup("Matrix elementwise ops", [], () => {
+	addTestGroup("Matrix ops ops", [], () => {
 		const tests: { code: string; expected: pl2.Result }[] = [
-			{ code: `mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2. Result_Vector, val: [3, 7] } },
+			{ code: `mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2.Result_Vector, val: [3, 7] } },
+			{ code: `transpose(mat<2, 2>{1, 2, 3, 4})`, expected: { type: pl2.Result_Matrix, rows: 2, cols: 2, val: [1, 2, 3, 4] } },
 		];
 
 		for (const test of tests) {
