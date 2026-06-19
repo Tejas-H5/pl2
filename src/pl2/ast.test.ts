@@ -354,12 +354,30 @@ addTestGroup("Type initializers", [ast.parseTypeArgs, ast.parseTypeInitializer],
 
 		testAssert(r, !!expr.typeArgs);
 		testEqual(r, expr.typeArgs.length, 2);
+		testAssert(r, expr.typeArgs[0].type === ast.Expression_Identifier);
 		testEqual(r, expr.typeArgs[0].name, "string");
+		testAssert(r, expr.typeArgs[1].type === ast.Expression_Identifier);
 		testEqual(r, expr.typeArgs[1].name, "f32");
 
 		testEqual(r, expr.typename.name, "map");
 		testEqual(r, expr.args.length, 3);
 	})
+
+	addTest("Matrix", r => {
+		const expr = ast.parseExpressionFromText("mat<1, 2>{0}");
+
+		testAssert(r, !!expr, "0");
+		testAssert(r, expr.type === ast.Expression_TypeInitializer);
+		testAssert(r, !!expr.typeArgs);
+
+		testEqual(r, expr.typeArgs.length, 2);
+
+		testAssert(r, expr.typeArgs[0].type === ast.Expression_NumberLiteral);
+		testEqual(r, expr.typeArgs[0].val, 1);
+		testAssert(r, expr.typeArgs[1].type === ast.Expression_NumberLiteral);
+		testEqual(r, expr.typeArgs[1].val, 2);
+
+	});
 });
 
 addTestGroup("Number parsing", [ast.parseNumberLiteral, ast.computeNumberForNumberExpression], () => {

@@ -20,7 +20,12 @@ import {
     Result_String,
     Result_List,
     Result_Map,
-    resultTypeToString
+    resultTypeToString,
+    Result_Matrix,
+    Result,
+    matrixGetIdx,
+    setResult,
+    Result_Vector
 } from "./interpreter";
 
 export type BuiltinFn = (fn: FunctionCall, iter: ProgramIterator, dst: Slot) => ExprReturn;
@@ -28,6 +33,7 @@ export type BuiltinFn = (fn: FunctionCall, iter: ProgramIterator, dst: Slot) => 
 export function getBuiltinFn(name: string): BuiltinFn | undefined {
 	switch (name) {
 		case "print":      return print;
+		case "len":        return len;
 		case "math_max":   return math_max;
 		case "math_min":   return math_min;
 		case "math_clamp": return math_clamp;
@@ -38,11 +44,13 @@ export function getBuiltinFn(name: string): BuiltinFn | undefined {
 		case "math_acos":  return math_acos;
 		case "math_atan":  return math_atan;
 		case "math_atan2": return math_atan2;
-		case "len":        return len;
-		// case "math_log":        return math_log;
-		// case "math_ln":         return math_ln;
-		// case "math_pow":        return math_pow;
-		// case "math_sqrt":       return math_sqrt;
+		case "math_log2":  return math_log2;
+		case "math_ln":    return math_ln;
+		case "math_pow":   return math_pow;
+		case "math_sqrt":  return math_sqrt;
+		case "mul":        return mul;
+
+		// TODO: drawing
 	}
 
 	return undefined;
@@ -159,6 +167,88 @@ export function math_atan2(call: FunctionCall, iter: ProgramIterator, dst: Slot)
 	if (evaluateArgumentNumber(call, 0, iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
 	if (evaluateArgumentNumber(call, 1, iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
 	return setResultNumber(dst, Math.atan2((iter.temp1.result as ResultNumber).val, (iter.temp2.result as ResultNumber).val))
+}
+
+export function math_log2(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_log2", 1, dst))                    return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	return setResultNumber(dst, Math.log2((dst.result as ResultNumber).val));
+}
+
+export function math_ln(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_ln", 1, dst))                    return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	return setResultNumber(dst, Math.log((dst.result as ResultNumber).val));
+}
+
+export function math_pow(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_pow", 2, dst))                           return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
+	if (evaluateArgumentNumber(call, 1, iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
+	return setResultNumber(dst, Math.pow((iter.temp1.result as ResultNumber).val, (iter.temp2.result as ResultNumber).val));
+}
+
+export function math_sqrt(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "math_sqrt", 1, dst))                   return RETURN_ERR;
+	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+	return setResultNumber(dst, Math.sqrt((dst.result as ResultNumber).val));
+}
+
+export function mul(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+	if (checkNumArgs(call, "mul", 2, dst)) return RETURN_ERR;
+	if (evaluateExpressionValue(call.arguments[0], iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
+	if (evaluateExpressionValue(call.arguments[1], iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
+
+	const a1 = iter.temp1.result;
+	const a2 = iter.temp2.result;
+
+	if (a1.type === Result_Matrix && a2.type === Result_Vector) {
+		if (a1.cols !== a2.val.length) return setError(dst, "m1.cols !== vec.length");
+
+		const result: Result = {
+			type: Result_Vector,
+			val: Array(a1.cols).fill(0),
+		};
+
+		for (let a1Row = 0; a1Row < a1.rows; a1Row++) {
+			let sum = 0;
+			for (let k = 0; k < a1.cols; k++) {
+				const a1Idx = matrixGetIdx(a1, a1Row, k);
+				sum += a1.val[a1Idx] * a2.val[k];
+			}
+			result.val[a1Row] = sum;
+		}
+
+		return setResult(dst, result);
+	}
+
+	if (a1.type === Result_Matrix && a2.type === Result_Matrix) {
+		if (a1.cols !== a2.rows) return setError(dst, "m1.cols !== m2.rows");
+
+		const result: Result = {
+			type: Result_Matrix,
+			rows: a1.rows,
+			cols: a2.cols,
+			val: Array(a1.cols * a2.rows).fill(0),
+		};
+
+		for (let a1Row = 0; a1Row < a1.rows; a1Row++) {
+			for (let a2Col = 0; a2Col < a2.cols; a2Col++) {
+				let sum = 0;
+				for (let k = 0; k < a1.cols; k++) {
+					const a1Idx = matrixGetIdx(a1, a1Row, k);
+					const a2Idx = matrixGetIdx(a2, k, a2Col);
+					sum += a1.val[a1Idx] * a2.val[a2Idx];
+				}
+				const resultIdx = matrixGetIdx(result, a1Row, a2Col);
+				result.val[resultIdx] = sum;
+			}
+		}
+
+		return setResult(dst, result);
+	}
+
+	return setError(dst, "mul only handles Matrix x Matrix or Matrix x Vector");
 }
 
 export function len(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {

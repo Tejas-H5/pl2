@@ -1,5 +1,6 @@
-import { addTest, addTestGroup, setCurrentTestFile, testAssert, testEqual, TestResult } from "src/testing/testing";
+import { addTest, addTestGroup, setCurrentTestFile, testAssert, testDeepEqual, testEqual, TestResult } from "src/testing/testing";
 import * as pl2 from "./interpreter";
+import { assertNever } from "./assert";
 
 setCurrentTestFile("src/pl2/interpreter.test.ts", pl2.interpretProgram);
 
@@ -31,7 +32,6 @@ function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, mes
 				testEqualResult(r, got.val[i], wanted.val[i]);
 			}
 		} break;
-
 		case pl2.Result_Map: {
 			testAssert(r, got.type === wanted.type);
 			testEqual(r, got.val.size, wanted.val.size);
@@ -39,6 +39,19 @@ function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, mes
 				testEqual(r, v, wanted.val.get(k));
 			}
 		} break;
+		case pl2.Result_Vector: {
+			testAssert(r, got.type === wanted.type);
+			testDeepEqual(r, got.val, wanted.val);
+		} break;
+		case pl2.Result_Matrix: {
+			testAssert(r, got.type === wanted.type);
+			if (testEqual(r, got.rows, wanted.rows, "rows not equal")) {
+				if (testEqual(r, got.cols, wanted.cols, "cols not equal")) {
+					testDeepEqual(r, got.val.length, wanted.val.length);
+				}
+			}
+		} break;
+		default: assertNever(wanted);
 	}
 }
 
@@ -256,6 +269,70 @@ addTestGroup("Binary operations", [], () => {
 			testEqualResult(r, c, pl2.newNumber(6));
 		});
 	});
+
+
+	addTestGroup("Vector elementwise ops", [], () => {
+		const tests: { code: string; expected: pl2.Result; debug: boolean; }[] = [
+			{ code: `vec{1, 2, 3}   +  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [4,  4, 4] }, debug: false, },
+			{ code: `vec{1, 2, 3}   -  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [-2, 0, 2] }, debug: false, },
+			{ code: `vec{1, 2, 3}   *  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [3,  4, 3] }, debug: false, },
+			{ code: `vec{5, 10, 15} /  vec{5, 5, 5}`, expected: { type: pl2.Result_Vector, val: [1, 2, 3] },  debug: false, },
+			{ code: `vec{1,2,3}     == vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 0, 0] },  debug: false, },
+			{ code: `vec{1,2,3}     != vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 1, 1] },  debug: false, },
+			{ code: `vec{1,2,3}     <  vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 1, 0] },  debug: false, },
+			{ code: `vec{1,2,3}     <= vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 1, 0] },  debug: false, },
+			{ code: `vec{1,2,3}     >  vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 0, 1] },  debug: false, },
+			{ code: `vec{1,2,3}     >= vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 0, 1] },  debug: false, },
+		];
+
+		for (const test of tests) {
+			addTest(test.code, r => {
+				const ctx = pl2.interpretCode("")
+				const [result, err] = pl2.evaluateCode(test.code, ctx);
+				testEqual(r, err, undefined);
+				testEqualResult(r, result, test.expected);
+			}, test.debug);
+		}
+	});
+
+	addTestGroup("Matrix elementwise ops", [], () => {
+		const tests: { code: string; expected: pl2.Result }[] = [
+			{ code: `mat<1, 3>{1, 2, 3}   +  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [4,  4, 4] } },
+			{ code: `mat<1, 3>{1, 2, 3}   -  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [-2, 0, 2] } },
+			{ code: `mat<1, 3>{1, 2, 3}   *  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [3,  4, 3] } },
+			{ code: `mat<1, 3>{5, 10, 15} /  mat<1, 3>{5, 5, 5}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 2, 3] } },
+			{ code: `mat<1, 3>{1,2,3}     == mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 0, 0] } },
+			{ code: `mat<1, 3>{1,2,3}     != mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [0, 1, 1] } },
+			{ code: `mat<1, 3>{1,2,3}     <  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [0, 1, 0] } },
+			{ code: `mat<1, 3>{1,2,3}     <= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 1, 0] } },
+			{ code: `mat<1, 3>{1,2,3}     >  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [0, 0, 1] } },
+			{ code: `mat<1, 3>{1,2,3}     >= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 0, 1] } },
+		];
+
+		for (const test of tests) {
+			addTest(test.code, r => {
+				const ctx = pl2.interpretCode("")
+				const [result, err] = pl2.evaluateCode(test.code, ctx);
+				testEqual(r, err, undefined);
+				testEqualResult(r, result, test.expected);
+			});
+		}
+	});
+
+	addTestGroup("Matrix elementwise ops", [], () => {
+		const tests: { code: string; expected: pl2.Result }[] = [
+			{ code: `mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2. Result_Vector, val: [3, 7] } },
+		];
+
+		for (const test of tests) {
+			addTest(test.code, r => {
+				const ctx = pl2.interpretCode("")
+				const [result, err] = pl2.evaluateCode(test.code, ctx);
+				testEqual(r, err, undefined);
+				testEqualResult(r, result, test.expected);
+			});
+		}
+	});
 })
 
 addTestGroup("User functions", [], () => {
@@ -273,15 +350,17 @@ addTestGroup("User functions", [], () => {
 
 
 	addTest("Can call a user-defined function", r => {
-		const result = pl2.interpretCode(`
-			increment = fn(x) {
-				return(x + 1)
-			}
-		`);
+		const result = pl2.interpretCode(` increment = fn(x) { return(x + 1) } `);
 
 		const [c, err] = pl2.evaluateCode("increment(2)", result);
 		testEqual(r, err, undefined);
 		testEqualResult(r, c, pl2.newNumber(3));
+	});
+
+	addTest("Provides error when not found", r => {
+		const ctx = pl2.interpretCode("")
+		const [, err] = pl2.evaluateCode("the_thing()", ctx);
+		testEqual(r, err, "Couldn't find function the_thing in this scope");
 	});
 });
 
@@ -617,6 +696,58 @@ addTestGroup("Indexing", [], () => {
 				"1 12",
 				"2 25",
 				"4 12",
+			]);
+		});
+	});
+
+	addTestGroup("vec", [], () => {
+		addTest("Normal Vector", r => {
+			const result = pl2.interpretCode(`
+				x = vec{1, 2, 3}				
+				print(x)
+			`);
+
+			testEqualLogs(r, result, [
+				"vec[1, 2, 3]",
+			]);
+		});
+	});
+
+	addTestGroup("mat", [], () => {
+		addTest("All values matrix", r => {
+			const result = pl2.interpretCode(`
+				m = mat<3, 4>{
+					1, 4, 7, 0,
+					2, 5, 8, 0,
+					3, 6, 9, 0,
+				}
+				print(m)
+			`);
+
+			testEqual(r, result.lastResult.error, undefined);
+			testEqualLogs(r, result, [
+`mat[
+    [1, 4, 7, 0],
+    [2, 5, 8, 0],
+    [3, 6, 9, 0],
+]`,
+			]);
+		});
+
+		addTest("Diagnonal matrix", r => {
+			const result = pl2.interpretCode(`
+				// Stole this from Odin too. Although It's not quite the same, a true equivelant would be more like m: mat<3, 4> = 1
+				m = mat<3, 4>{2} 
+				print(m)
+			`);
+
+			testEqual(r, result.lastResult.error, undefined);
+			testEqualLogs(r, result, [
+`mat[
+    [2, 0, 0, 0],
+    [0, 2, 0, 0],
+    [0, 0, 2, 0],
+]`,
 			]);
 		});
 	});

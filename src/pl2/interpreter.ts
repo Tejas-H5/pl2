@@ -10,8 +10,7 @@ export function interpretProgram(program: ast.Program): ProgramIterator {
 	pushScope(iter, 0); 
 
 	for (const expr of program.statements) {
-		const dst = newSlot();
-		if (evaluateExpression(expr, iter, dst) !== RETURN_NONE) {
+		if (evaluateExpression(expr, iter, iter.lastResult) !== RETURN_NONE) {
 			break;
 		}
 	}
@@ -35,6 +34,8 @@ export function interpretCodeLines(lines: string[]): ProgramIterator {
 export type ProgramIterator = {
 	program: ast.Program;
 	nextStatementIdx: number;
+
+	lastResult: Slot;
 
 	stack:  ast.Expression[];
 	scopes: Scope[];
@@ -68,6 +69,7 @@ export function newProgramIterator(program: ast.Program): ProgramIterator {
 	return {
 		program: program,
 		nextStatementIdx: 0,
+		lastResult: newSlot(),
 		stack:  [],
 		scopes: [],
 		logs:   [],
@@ -179,6 +181,14 @@ export const Result_Boolean  = 3;
 export const Result_Function = 4;
 export const Result_List     = 5;
 export const Result_Map      = 6;
+// It's tempting to represent Vectors and Matrices with the same type underneath, 
+// and even to use Tensors instead of limiting oneself to 2D matrices. 
+// However, I have experienced in my previous attempt at writing this language, that 
+// the code just gets super complicated, and the actual intent of the programmer gets lost 
+// too, which makes it harder to visualise the results in a useful way.
+export const Result_Vector   = 7; 
+export const Result_Matrix   = 8;
+// TODO: export const Result_Quaternion = 9;
 
 export function resultTypeToString(type: ResultType) {
 	switch(type) {
@@ -189,19 +199,13 @@ export function resultTypeToString(type: ResultType) {
 		case Result_Function: return "Function";
 		case Result_List:     return "List";
 		case Result_Map:      return "Map";
+		case Result_Vector:   return "Vector";
+		case Result_Matrix:   return "Matrix";
 		default: assertNever(type);
 	}
 }
 
-export type ResultType =
- | typeof Result_Nothing
- | typeof Result_Number
- | typeof Result_String
- | typeof Result_Boolean
- | typeof Result_Function
- | typeof Result_List
- | typeof Result_Map
- ;
+export type ResultType = Result["type"];
 
 type ResultBase = { type: number; val: unknown; }
 
@@ -243,6 +247,18 @@ export type ResultNothing = ResultBase & {
 	val: undefined,
 }
 
+export type ResultVector = ResultBase & {
+	type: typeof Result_Vector;
+	val:  number[];
+};
+
+export type ResultMatrix = ResultBase & {
+	type: typeof Result_Matrix;
+	val:  number[];
+	rows: number;
+	cols:  number;
+};
+
 export type Result =
  | ResultNumber
  | ResultString
@@ -251,6 +267,8 @@ export type Result =
  | ResultNothing
  | ResultList
  | ResultMap
+ | ResultVector
+ | ResultMatrix
  ;
 
 export type Slot = {
@@ -555,7 +573,76 @@ function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperato
 		}
 	}
 
-	return setError(dst, `Can't apply ${ast.operatorToString(exprOp)} between ${resultTypeToString(lhs.type)} and ${resultTypeToString(rhs.type)}`);
+	if (lhs.type === Result_Vector && rhs.type === Result_Vector) {
+		if (rhs.val.length !== lhs.val.length) {
+			return setError(dst, `Vectors did not have the same sizes (${rhs.val.length} and ${lhs.val.length})`);
+		}
+
+		const result: Result = {
+			type: Result_Vector,
+			val: Array(rhs.val.length).fill(0)
+		};
+
+		switch (exprOp) {
+			case ast.OP_ADD:             { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] +   rhs.val[i]; } } break;
+			case ast.OP_SUBTRACT:        { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] -   rhs.val[i]; } } break;
+			case ast.OP_MODULO:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] %   rhs.val[i]; } } break;
+			case ast.OP_MULTIPLY:        { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] *   rhs.val[i]; } } break;
+			case ast.OP_DIVIDE:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] /   rhs.val[i]; } } break;
+			case ast.OP_LOGICAL_AND:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) &&  (!!rhs.val[i])) ? 1 : 0} } break;
+			case ast.OP_LOGICAL_OR:      { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) &&  (!!rhs.val[i])) ? 1 : 0} } break;
+			case ast.OP_LOGICAL_XOR:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) !== (!!rhs.val[i])) ? 1 : 0} } break;
+			case ast.OP_BITWISE_AND:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] & rhs.val[i] } } break;
+			case ast.OP_BITWISE_OR:      { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] | rhs.val[i] } } break;
+			case ast.OP_BITWISE_XOR:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] ^ rhs.val[i] } } break;
+			case ast.OP_LESS_THAN:       { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] <   rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_LESS_THAN_EQ:    { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] <=  rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_GREATER_THAN:    { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] >   rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_GREATER_THAN_EQ: { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] >=  rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_EQ:              { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] === rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_NOT_EQ:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] !== rhs.val[i] ? 1 : 0; } } break;
+			default: return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+		}
+
+		return setResult(dst, result);
+	}
+
+	if (lhs.type === Result_Matrix && rhs.type === Result_Matrix) {
+		if (rhs.rows !== lhs.rows) return setError(dst, `Matrices did not have the same row count`);
+		if (rhs.cols !== lhs.cols) return setError(dst, `Matrices did not have the same column count`);
+
+		const result: Result = {
+			type: Result_Matrix,
+			rows: rhs.rows,
+			cols: rhs.cols,
+			val: Array(rhs.val.length).fill(0)
+		};
+
+		switch (exprOp) {
+			case ast.OP_ADD:             { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] +   rhs.val[i]; } } break;
+			case ast.OP_SUBTRACT:        { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] -   rhs.val[i]; } } break;
+			case ast.OP_MODULO:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] %   rhs.val[i]; } } break;
+			case ast.OP_MULTIPLY:        { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] *   rhs.val[i]; } } break;
+			case ast.OP_DIVIDE:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] /   rhs.val[i]; } } break;
+			case ast.OP_LOGICAL_AND:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) &&  (!!rhs.val[i])) ? 1 : 0} } break;
+			case ast.OP_LOGICAL_OR:      { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) &&  (!!rhs.val[i])) ? 1 : 0} } break;
+			case ast.OP_LOGICAL_XOR:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) !== (!!rhs.val[i])) ? 1 : 0} } break;
+			case ast.OP_BITWISE_AND:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] & rhs.val[i] } } break;
+			case ast.OP_BITWISE_OR:      { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] | rhs.val[i] } } break;
+			case ast.OP_BITWISE_XOR:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] ^ rhs.val[i] } } break;
+			case ast.OP_LESS_THAN:       { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] <   rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_LESS_THAN_EQ:    { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] <=  rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_GREATER_THAN:    { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] >   rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_GREATER_THAN_EQ: { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] >=  rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_EQ:              { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] === rhs.val[i] ? 1 : 0; } } break;
+			case ast.OP_NOT_EQ:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] !== rhs.val[i] ? 1 : 0; } } break;
+			default: return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+		}
+
+		return setResult(dst, result);
+	}
+
+	return setError(dst, `Can't apply ${ast.operatorToString(exprOp)} between ${resultTypeToString(lhs.type)} and ${resultTypeToString(rhs.type)}`);A
 }
 
 function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator, dst: Slot): ExprReturn {
@@ -742,11 +829,10 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 		case "list": {
 			const result: Result = { type: Result_List, val: [] };
 
-			const slot = newSlot();
 			for (const arg of expr.args) {
-				if (evaluateExpressionValue(arg, iter, slot) === RETURN_ERR) return setError(dst, slot.error);
+				if (evaluateExpressionValue(arg, iter, dst) === RETURN_ERR) return RETURN_ERR;
 				// We'll allow empty values in the list, why not.
-				result.val.push(cloneResult(slot.result));
+				result.val.push(cloneResult(dst.result));
 			}
 
 			return setResult(dst, result);
@@ -782,9 +868,70 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 
 			return setResult(dst, result);
 		} break;
+		case "vec": {
+			const result: Result = { type: Result_Vector, val: [] };
+
+			for (const arg of expr.args) {
+				if (evaluateExpressionValue(arg, iter, dst) === RETURN_ERR) return RETURN_ERR;
+				if (dst.result.type !== Result_Number)                      return setError(dst, "Vectors can only be initialized with numbers");
+				result.val.push(dst.result.val);
+			}
+
+			return setResult(dst, result);
+		} break;
+		case "mat": {
+			if (!expr.typeArgs)                                         return setError(dst, "Need type args, e.g mat<3, 4>");
+			if (expr.typeArgs.length !== 2)                             return setError(dst, "Need 2 type args, e.g mat<3, 4>");
+			if (expr.typeArgs[0].type !== ast.Expression_NumberLiteral) return setError(dst, "Need 2 numeric type args, e.g mat<3, 4>");
+			if (expr.typeArgs[1].type !== ast.Expression_NumberLiteral) return setError(dst, "Need 2 numeric type args, e.g mat<3, 4>");
+
+			const rows = expr.typeArgs[0].val;
+			const cols = expr.typeArgs[1].val;
+
+			if (expr.args.length !== rows * cols && expr.args.length !== 1) {
+				return setError(dst, `Need to initialize the matrix with exactly 1 or ${rows * cols} values`);
+			}
+			
+			const result: Result = {
+				type: Result_Matrix,
+				rows: rows,
+				cols: cols,
+				val: Array(rows * cols).fill(0),
+			};
+
+			if (expr.args.length === 1) {
+				if (evaluateExpressionValue(expr.args[0], iter, dst) === RETURN_ERR) return RETURN_ERR;
+				if (dst.result.type !== Result_Number) return setError(dst, "Matrix diagonal can only be initialized with numbers");
+				const diagonalValue = dst.result.val;
+				
+				const minSize = Math.min(rows, cols);
+				for (let i = 0; i < minSize; i++) {
+					const idx = matrixGetIdx(result, i, i);
+					result.val[idx] = diagonalValue;
+				}
+			} else {
+				for (let i = 0; i < expr.args.length; i++) {
+					const arg = expr.args[i];
+					if (evaluateExpressionValue(arg, iter, dst) === RETURN_ERR) return RETURN_ERR;
+					if (dst.result.type !== Result_Number) return setError(dst, "Matrix element can only be initialized with numbers");
+					result.val[i] = dst.result.val;
+				}
+			}
+
+			return setResult(dst, result);
+		} break;
 	}
 
 	return setError(dst, `Don't know how to initialize this type: ${expr.typename.name}`);
+}
+
+// Gets the dimension of a vector/matrix
+function getDimensionTypeArg(expr: ast.TypeInitializer, idx: number, dst: Slot): number | undefined {
+	assert(!!expr.typeArgs);
+	if (expr.typeArgs[idx].type !== ast.Expression_NumberLiteral) { setError(dst, `Type arg ${idx} needs to be numeric`); return undefined; }
+	if (expr.typeArgs[idx].val % 0 !== 0) { setError(dst, `Type arg ${idx} needs to be numeric`); return undefined; }
+	if (expr.typeArgs[idx].val > 1)       { setError(dst, `Type arg ${idx} needs to be > 1`); return undefined; }
+	return expr.typeArgs[idx].val;
 }
 
 
@@ -808,8 +955,31 @@ export function resultToString(result: Result): string {
 		case Result_Function: return "fn (" + result.val.args.map(a => a.name).join(", ") + ")"; 
 		case Result_List:     return "list[" + result.val.map(resultToString).join(", ") + "]";
 		case Result_Map:      return "map[" + [...result.val.values()].map((e) => resultToString(e.key) + " -> " + resultToString(e.val)).join(", ") + "]";
+		case Result_Vector:   return "vec[" + result.val.map(v => "" + v).join(", ") + "]";
+		case Result_Matrix:   return "mat[" + matrixValuesToString(result) + "\n]";
 		default: assertNever(result);
 	}
 	return "unknown string representation";
 }
 
+function matrixValuesToString(mat: ResultMatrix): string {
+	let sb: string[] = [];
+
+	for (let row = 0; row < mat.rows; row++) {
+		sb.push("\n    [");
+		for (let col = 0; col < mat.cols; col++) {
+			if (col !== 0) sb.push(", ");
+
+			const idx = matrixGetIdx(mat, row, col);
+			sb.push("" + mat.val[idx]);
+		}
+		sb.push("],");
+	}
+
+	return sb.join("");
+}
+
+
+export function matrixGetIdx(mat: ResultMatrix, row: number, col: number): number {
+	return row * mat.cols + col;
+}

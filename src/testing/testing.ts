@@ -51,7 +51,7 @@ export function test(r: TestResult, outcome: boolean, message = ""): boolean {
 
 export function testEqual(r: TestResult, a: unknown, b: unknown, message = ""): boolean {
 	if (!test(r, a === b, message)) {
-		testFailure(r, `    got: ${JSON.stringify(a)}, wanted: ${JSON.stringify(b)}`);
+		testFailure(r, `\ngot   : ${JSON.stringify(a)},\nwanted: ${JSON.stringify(b)}\n`);
 		return false;
 	}
 	return true;
@@ -69,7 +69,7 @@ export function testDeepEqual(r: TestResult, a: unknown, b: unknown) {
 	const result = deepEquals(a, b);
 
 	if (!test(r, result.mismatches.length === 0)) {
-		const message = [`wanted: ${JSON.stringify(a)} !== expected: ${JSON.stringify(b)}`];
+		const message = [`got: ${JSON.stringify(a)} !== expected: ${JSON.stringify(b)}`];
 		for (const mismatch of result.mismatches) {
 			message.push(`${mismatch.path} - ${mismatch.expected} !== ${mismatch.got}`)
 		}
@@ -335,7 +335,7 @@ export function printResults(results: TestContext) {
 		}
 	}
 
-	if (mode === MODE_FAILING && numFails > 20) {
+	if (mode === MODE_FAILING && numFails > 10) {
 		mode = MODE_FAILING_SUMMARY;
 	}
 

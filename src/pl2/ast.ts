@@ -178,7 +178,7 @@ export type ForLoopRange = ExpressionBase & {
 export type TypeInitializer = ExpressionBase & {
 	type: typeof Expression_TypeInitializer;
 	typename: Identifier;
-	typeArgs: Identifier[] | undefined; 
+	typeArgs: Expression[] | undefined; 
 	args: Expression[];
 }
 
@@ -636,7 +636,7 @@ export function parseSingularExpressionInternal(parser: Parser): Expression | un
 
 		// No whitespace parsing here. fn(x) to work, fn (x) to not work.
 
-		let typeArgs: Identifier[] | undefined;
+		let typeArgs: Expression[] | undefined;
 		if (currentChar(parser) === "<") {
 			typeArgs = parseTypeArgs(parser);
 		}
@@ -935,7 +935,7 @@ export function parseFunctionCall(parser: Parser, functionName: Identifier): Fun
 export function parseTypeInitializer(
 	parser: Parser,
 	identifier: Identifier,
-	typeArgs: Identifier[] | undefined
+	typeArgs: Expression[] | undefined
 ): TypeInitializer | undefined {
 	if (currentChar(parser) !== "{") return;
 
@@ -976,22 +976,26 @@ export function parseTypeInitializer(
 	};
 }
 
-export function parseTypeArgs(parser: Parser): Identifier[] | undefined {
+export function parseTypeArgs(parser: Parser): Expression[] | undefined {
 	if (currentChar(parser) !== "<") return;
 	advance(parser);
 
-	const args: Identifier[] = [];
+	const args: Expression[] = [];
 
 	while(true) {
-		const ident = parseIdentifier(parser);
-		if (ident) {
-			args.push(ident);
+		let typeExpr: Expression | undefined = parseIdentifier(parser);
+		if (!typeExpr) {
+			typeExpr = parseNumberLiteral(parser);
+		}
+
+		if (typeExpr) {
+			args.push(typeExpr);
 			parseWhitespace(parser);
 			if (currentChar(parser) === ",") {
 				advance(parser);
 			}
 			continue;
-		} 
+		}
 
 		parseWhitespace(parser);
 		if (currentChar(parser) !== ">") {
