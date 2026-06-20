@@ -1,6 +1,27 @@
 import { assert, assertNever } from "./assert";
 import * as ast from "./ast";
-import { getBuiltinFn } from "./builtins";
+import { FunctionCall } from "./ast";
+import {
+	print,
+	len,
+	math_max,
+	math_min,
+	math_clamp,
+	math_sin,
+	math_cos,
+	math_tan,
+	math_asin,
+	math_acos,
+	math_atan,
+	math_atan2,
+	math_log2,
+	math_ln,
+	math_pow,
+	math_sqrt,
+	mul,
+	transpose,
+	inverse,
+} from "./builtins";
 import { newParser } from "./parser";
 
 export function interpretProgram(program: ast.Program): ProgramIterator {
@@ -10,9 +31,8 @@ export function interpretProgram(program: ast.Program): ProgramIterator {
 	pushScope(iter, 0); 
 
 	for (const expr of program.statements) {
-		if (evaluateExpression(expr, iter, iter.lastResult) !== RETURN_NONE) {
-			break;
-		}
+		const rt = evaluateExpression(expr, iter);
+		if (rt !== RETURN_NONE) break;
 	}
 
 	assert(iter.scopes.length === 1);
@@ -35,19 +55,18 @@ export type ProgramIterator = {
 	program: ast.Program;
 	nextStatementIdx: number;
 
-	lastResult: Slot;
-
 	stack:  ast.Expression[];
 	scopes: Scope[];
 
 	logs: LogEntry[];
 
-	temp1: Slot;
-	temp2: Slot;
-	temp3: Slot;
-	temp4: Slot;
-	temp5: Slot;
-	temp6: Slot;
+	lastResult: {
+		result: Result;
+		error: {
+			message: string;
+			expr:    ast.Expression;
+		} | undefined;
+	};
 }
 
 export type LogEntry = {
@@ -56,7 +75,7 @@ export type LogEntry = {
 }
 
 export type Scope = {
-	vars: Map<string, Slot>;
+	vars: Map<string, Result>;
 	flags: number;
 }
 
@@ -69,16 +88,13 @@ export function newProgramIterator(program: ast.Program): ProgramIterator {
 	return {
 		program: program,
 		nextStatementIdx: 0,
-		lastResult: newSlot(),
+		lastResult: {
+			result: NOTHING,
+			error:  undefined,
+		},
 		stack:  [],
 		scopes: [],
 		logs:   [],
-		temp1: newSlot(),
-		temp2: newSlot(),
-		temp3: newSlot(),
-		temp4: newSlot(),
-		temp5: newSlot(),
-		temp6: newSlot(),
 	};
 }
 
@@ -106,6 +122,11 @@ export function popScope(iter: ProgramIterator) {
 }
 
 export function getVar(iter: ProgramIterator, name: string): Result | undefined {
+	const builtin = getBuiltin(name);
+	if (builtin) {
+		return builtin;
+	}
+
 	if (iter.scopes.length === 0) return undefined;
 
 	for (let i = iter.scopes.length - 1; i > 0; i--) {
@@ -116,7 +137,7 @@ export function getVar(iter: ProgramIterator, name: string): Result | undefined 
 
 		const value = scope.vars.get(name)
 		if (value) {
-			return value.result;
+			return value;
 		}
 
 		if (scope.flags & SCOPE_ISOLATED) {
@@ -128,17 +149,15 @@ export function getVar(iter: ProgramIterator, name: string): Result | undefined 
 	{
 		const value = iter.scopes[0].vars.get(name);
 		if (value) {
-			return value.result;
+			return value;
 		}
 	}
 
 	return undefined;
 }
 
-const NIL_SLOT = newSlot();
-
-export function setOrCreateVar(iter: ProgramIterator, name: string): Slot {
-	if (iter.scopes.length === 0) return NIL_SLOT;
+export function setOrCreateVar(iter: ProgramIterator, name: string, val: Result){
+	if (iter.scopes.length === 0) return;
 
 	let scopeToUse: Scope | undefined;
 	for (let i = iter.scopes.length - 1; i >= 0; i--) {
@@ -161,17 +180,24 @@ export function setOrCreateVar(iter: ProgramIterator, name: string): Slot {
 		scopeToUse = iter.scopes[iter.scopes.length - 1];
 	}
 
-	const slot = newSlot();
-	scopeToUse.vars.set(name, slot);
-
-	return slot;
+	scopeToUse.vars.set(name, val);
 }
 
-export function createVar(iter: ProgramIterator, name: string): Slot {
+export function createVar(
+	iter: ProgramIterator,
+	name: string,
+	val: Result,
+	conflictMessage: string,
+	conflictExpr: ast.Expression,
+): ExprReturn {
 	const scope = getCurrentScope(iter);
-	const slot = newSlot();
-	scope.vars.set(name, slot);
-	return slot;
+
+	if (scope.vars.has(name)) {
+		return setError(iter, conflictExpr, conflictMessage);
+	}
+
+	scope.vars.set(name, val);
+	return RETURN_NONE;
 }
 
 export const Result_Nothing  = 0; // Also represented with 'undefined'
@@ -189,6 +215,7 @@ export const Result_Map      = 6;
 export const Result_Vector   = 7; 
 export const Result_Matrix   = 8;
 // TODO: export const Result_Quaternion = 9;
+export const Result_BuiltinFunction = 10;
 
 export function resultTypeToString(type: ResultType) {
 	switch(type) {
@@ -197,6 +224,7 @@ export function resultTypeToString(type: ResultType) {
 		case Result_String:   return "String";
 		case Result_Boolean:  return "Boolean";
 		case Result_Function: return "Function";
+		case Result_BuiltinFunction:   return "*Function";
 		case Result_List:     return "List";
 		case Result_Map:      return "Map";
 		case Result_Vector:   return "Vector";
@@ -229,6 +257,13 @@ export type ResultFunction = ResultBase & {
 	val: ast.FunctionDefinition;
 }
 
+export type BuiltinFn = (fn: FunctionCall, iter: ProgramIterator) => ExprReturn;
+
+export type ResultBuiltinFunction = ResultBase & {
+	type: typeof Result_BuiltinFunction;
+	val:  BuiltinFn;
+}
+
 export type ResultList = ResultBase & {
 	type: typeof Result_List;
 	val: Result[];
@@ -254,16 +289,21 @@ export type ResultVector = ResultBase & {
 
 export type ResultMatrix = ResultBase & {
 	type: typeof Result_Matrix;
-	val:  number[];
+	val: Matrix;
+};
+
+export type Matrix = {
+	data: number[];
 	rows: number;
 	cols:  number;
-};
+}
 
 export type Result =
  | ResultNumber
  | ResultString
  | ResultBoolean
  | ResultFunction
+ | ResultBuiltinFunction
  | ResultNothing
  | ResultList
  | ResultMap
@@ -271,46 +311,41 @@ export type Result =
  | ResultMatrix
  ;
 
-export type Slot = {
-	result: Result;
-	error:  string | undefined;
-};
-
-// Try to keep these to a minimum.
-export function newSlot(): Slot {
-	return {
-		result: NOTHING,
-		error: undefined,
-	};
-}
-
 export function cloneResult(src: Result): Result {
 	return { type: src.type, val: src.val } as Result;
 }
 
-export function setError(dst: Slot, reason: string | undefined): typeof RETURN_ERR {
-	dst.error = reason;
-	return RETURN_ERR;
+export function setError(iter: ProgramIterator, expr: ast.Expression, reason: string): typeof RETURN_ERROR {
+	iter.lastResult.error = {
+		message: reason,
+		expr: expr,
+	};
+	return RETURN_ERROR;
 }
 
-export function setResultNumber(dst: Slot, val: number): typeof RETURN_VAL {
-	dst.result = newNumber(val);
-	return RETURN_VAL;
+export function setResultNumber(iter: ProgramIterator, val: number): typeof RETURN_NONE {
+	iter.lastResult.result = newNumber(val);
+	return RETURN_NONE;
 }
 
-export function setResultBoolean(dst: Slot, val: boolean): typeof RETURN_VAL {
-	dst.result = newBoolean(val);
-	return RETURN_VAL;
+export function setResultBoolean(iter: ProgramIterator, val: boolean): typeof RETURN_NONE {
+	iter.lastResult.result = newBoolean(val);
+	return RETURN_NONE;
 }
 
-export function setResultString(dst: Slot, val: string): typeof RETURN_VAL {
-	dst.result = newString(val);
-	return RETURN_VAL;
+export function setResultString(iter: ProgramIterator, val: string): typeof RETURN_NONE {
+	iter.lastResult.result = newString(val);
+	return RETURN_NONE;
 }
 
-export function setResult(dst: Slot, val: Result): typeof RETURN_VAL {
-	dst.result = val;
-	return RETURN_VAL;
+export function setResult(iter: ProgramIterator, val: Result): typeof RETURN_NONE {
+	iter.lastResult.result = val;
+	return RETURN_NONE;
+}
+
+export function setReturnResult(iter: ProgramIterator, val: Result): typeof RETURN_RESULT {
+	iter.lastResult.result = val;
+	return RETURN_RESULT;
 }
 
 export function newNumber(val: number): ResultNumber {
@@ -334,104 +369,102 @@ export const NOTHING:  ResultNothing = { type: Result_Nothing, val: undefined }
 export const BREAK:    ResultNothing = { type: Result_Nothing, val: undefined }
 export const CONTINUE: ResultNothing = { type: Result_Nothing, val: undefined }
 
-export const RETURN_NONE  = 0;
-export const RETURN_VAL = 1;
-export const RETURN_ERR = 2;
+export const RETURN_NONE   = 0;
+export const RETURN_RESULT = 1;
+export const RETURN_ERROR  = 2;
 
 export type ExprReturn = 
  | typeof RETURN_NONE
- | typeof RETURN_VAL
- | typeof RETURN_ERR
+ | typeof RETURN_RESULT
+ | typeof RETURN_ERROR
  ;
-
-export type ExprValueReturn = 
- | typeof RETURN_VAL
- | typeof RETURN_ERR;
-
-export type ExprNoReturn = 
- | typeof RETURN_NONE
- | typeof RETURN_ERR;
-
 
 // TODO: Don't end up with this - we need an alternative formulation that lets us step through the program.
 // It doesn't need to be an elaborate VM like last time - a simple control-flow graph is fine.
-export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator, dst: Slot): ExprReturn {
+export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator): ExprReturn {
 	switch (expr.type) {
-		case ast.Expression_Identifier:         return evaluateIdentifier(expr, iter, dst);
-		case ast.Expression_Indexer:            return evaluateIndexer(expr, iter, dst);
-		case ast.Expression_BinaryExpression:   return evaluateBinaryOperation(expr, iter, dst);
-		case ast.Expression_FunctionCall:       return evaluateFunctionCall(expr, iter, dst);
-		case ast.Expression_IfChain:            return evaluateIfChain(expr, iter, dst); 
-		case ast.Expression_ForLoop:            return evaluateForLoop(expr, iter, dst);
-		case ast.Expression_TypeInitializer:    return evaluateTypeInitializer(expr, iter, dst);
-		case ast.Expression_NumberLiteral:      return setResultNumber(dst, expr.val);
-		case ast.Expression_StringLiteral:      return setResultString(dst, expr.val);
-		case ast.Expression_BooleanLiteral:     return setResultBoolean(dst, expr.val);
-		case ast.Expression_FunctionDefinition: return setResult(dst, { type: Result_Function, val: expr });
+		case ast.Expression_Identifier:         return evaluateIdentifier(expr, iter);
+		case ast.Expression_Indexer:            return evaluateIndexer(expr, iter);
+		case ast.Expression_BinaryExpression:   return evaluateBinaryOperation(expr, iter);
+		case ast.Expression_FunctionCall:       return evaluateFunctionCall(expr, iter);
+		case ast.Expression_IfChain:            return evaluateIfChain(expr, iter); 
+		case ast.Expression_ForLoop:            return evaluateForLoop(expr, iter);
+		case ast.Expression_TypeInitializer:    return evaluateTypeInitializer(expr, iter);
+		case ast.Expression_NumberLiteral:      return setResultNumber(iter, expr.val);
+		case ast.Expression_StringLiteral:      return setResultString(iter, expr.val);
+		case ast.Expression_BooleanLiteral:     return setResultBoolean(iter, expr.val);
+		case ast.Expression_FunctionDefinition: {
+			const fn: ResultFunction = { type: Result_Function, val: expr };
+			if (expr.name) {
+				if (createVar(iter, expr.name.name, fn, "A value with this name already exists", expr.name) === RETURN_ERROR) {
+					return RETURN_ERROR;
+				}
+			}
+
+			return setResult(iter, fn);
+		} break;
 		case ast.Expression_Return: {
-			if (!expr.expr) return setResult(dst, NOTHING);
-			return evaluateExpression(expr.expr, iter, dst);
+			if (!expr.expr)                                           return setResult(iter, NOTHING);
+			if (evaluateExpression(expr.expr, iter) === RETURN_ERROR) return RETURN_ERROR;
+			return RETURN_RESULT;
 		}
-		case ast.Expression_Continue: return RETURN_VAL;
-		case ast.Expression_Break:    return RETURN_VAL;
 		case ast.Expression_ReturnBlock: {
 			let result;
 			pushScope(iter, 0); {
-				result = evaluateExpressionBlock(expr.block, iter, dst);
+				result = evaluateExpressionBlock(expr.block, iter);
 			} popScope(iter);
 			return result;
 		}
-		case ast.Expression_ForLoopRange: return setError(dst, "Can't use a for-loop range outside of a for-loop.");
+		case ast.Expression_ForLoopRange: return setError(iter, expr, "Can't use a for-loop range outside of a for-loop.");
+		case ast.Expression_Continue: return RETURN_NONE;
+		case ast.Expression_Break:    return RETURN_NONE;
 		default: {
 			assertNever(expr);
-			return setError(dst, "Could not evaluate expression");
 		} break;
 	}
 }
 
-export function evaluateExpressionValue(expr: ast.Expression, iter: ProgramIterator, dst: Slot): ExprValueReturn {
-	const rt = evaluateExpression(expr, iter, dst);
-	if (rt === RETURN_ERR)  return RETURN_ERR;
-	if (rt === RETURN_NONE) return setError(dst, "Expected an expression that results in a value here");
-	return rt;
+export function evaluateExpressionValue(expr: ast.Expression, iter: ProgramIterator): Result | undefined {
+	const rt = evaluateExpression(expr, iter);
+	if (rt === RETURN_ERROR) return undefined;
+	return iter.lastResult.result;
 }
 
 export function evaluateCode(code: string, iter: ProgramIterator): [Result, string | undefined] {
 	const expr = ast.parseExpressionFromText(code);
 	if (!expr) return [NOTHING, "Couldn't parse the expression"];
 	
-	const slot = newSlot();
-	evaluateExpression(expr, iter, slot);
-	return [slot.result, slot.error];
+	evaluateExpression(expr, iter);
+	return [iter.lastResult.result, iter.lastResult.error?.message];
 }
 
-function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+function evaluateFunctionCall(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
 	let rt: ExprReturn = RETURN_NONE;
 
 	// Needs to be hidden. When we create new variables in this scope
 	pushScope(iter, SCOPE_HIDDEN); {
-		rt = evaluateFunctionCallInternal(fn, iter, dst);
+		rt = evaluateFunctionCallInternal(fn, iter);
 	} popScope(iter);
 
 	return rt;
 }
 
-function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	// Users probably shouldn't be able to override builtin functions.
-	const builtinFn = getBuiltinFn(fn.name.name);
-	if (builtinFn) {
-		return builtinFn(fn, iter, dst);
-	}
-
+function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
 	const functionName = fn.name.name;
 	const userFn = getVar(iter, functionName);
-	if (userFn) {
-		if (userFn.type !== Result_Function) return setError(dst, "Value was not a function - it was a " + resultTypeToString(userFn.type));
+	if (!userFn) {
+		return setError(iter, fn.name, `Couldn't find function ${functionName} in this scope`);
+	}
 
+	if (userFn.type === Result_BuiltinFunction) {
+		return userFn.val(fn, iter);
+	} 
+
+	if (userFn.type === Result_Function) {
 		const wantedNumArgs = userFn.val.args.length;
 		const gotNumArgs    = fn.arguments.length;
 		if (wantedNumArgs !== gotNumArgs) {
-			return setError(dst, `Wanted ${wantedNumArgs} arguments for function ${fn.name.name}, got ${gotNumArgs} arguments instead`);
+			return setError(iter, fn, `Wanted ${wantedNumArgs} arguments for function ${fn.name.name}, got ${gotNumArgs} arguments instead`);
 		}
 
 		for (let i = 0; i < userFn.val.args.length; i++) {
@@ -440,9 +473,11 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 			// TODO: argument types, type validation
 
 			const argExpr = fn.arguments[i];
-			const varSlot = createVar(iter, argName);
-			const rt = evaluateExpression(argExpr, iter, varSlot); // We allow passing "nothing" into functions. Might change my mind later idk
-			if (rt === RETURN_ERR) return setError(dst, varSlot.error);
+			const argResult = evaluateExpressionValue(argExpr, iter); // We allow passing "nothing" into functions. Might change my mind later idk
+			if (!argResult) return RETURN_ERROR;
+			if (createVar(iter, argName, argResult, "An argument with this name already exists", argExpr) === RETURN_ERROR) {
+				return RETURN_ERROR;
+			}
 		}
 
 		// We only set the isolation flag on the current scope _now_ - we needed to read from the parent scope in order to 
@@ -451,131 +486,233 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 		scope.flags = scope.flags | SCOPE_ISOLATED;
 		scope.flags = scope.flags & ~SCOPE_HIDDEN;
 
-		return evaluateExpressionBlock(userFn.val.body, iter, dst);
+		if (evaluateExpressionBlock(userFn.val.body, iter) === RETURN_ERROR) return RETURN_ERROR;
+		return RETURN_NONE;
 	}
 
-	return setError(dst, `Couldn't find function ${functionName} in this scope`);
+	
+	return setError(iter, fn.name, "Value was not a function - it was a " + resultTypeToString(userFn.type));
 }
 
-function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator, dst: Slot): ExprReturn {
+function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator): ExprReturn {
 	const scope = getCurrentScope(iter);
 
 	for (const expr of block) {
 		if (scope.flags & SCOPE_ALLOW_CONTINUE_BREAK) {
-			if (expr.type === ast.Expression_Break)    return setResult(dst, BREAK);
-			if (expr.type === ast.Expression_Continue) return setResult(dst, CONTINUE);
+			if (expr.type === ast.Expression_Break)    return setResult(iter, BREAK);
+			if (expr.type === ast.Expression_Continue) return setResult(iter, CONTINUE);
 		}
 
-		const rt = evaluateExpression(expr, iter, dst);
-		if (rt) return rt;
+		const rt = evaluateExpression(expr, iter);
+		if (rt !== RETURN_NONE) return rt;
 	}
 
 	return RETURN_NONE;
 }
 
 
-function evaluateIfChain(expr: ast.IfChain, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (expr.blocks.length === 0) return setError(dst, "If chain was empty");
+function evaluateIfChain(expr: ast.IfChain, iter: ProgramIterator): ExprReturn {
+	if (expr.blocks.length === 0) return setError(iter, expr, "If chain was empty");
 
 	let rt: ExprReturn = RETURN_NONE;
 
 	pushScope(iter, currentScopeNonIsolatedFlags(iter)); {
-		rt = evaluateIfChainInternal(expr, iter, dst);
+		rt = evaluateIfChainInternal(expr, iter);
 	} popScope(iter);
 
 	return rt;
 }
 
-function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator, dst: Slot): ExprReturn {
-	const check = newSlot();
-
+function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator): ExprReturn {
 	for (const branch of expr.blocks) {
-		if (evaluateExpression(branch.check, iter, check) === RETURN_ERR) return setError(dst, check.error);
-		if (check.result.type !== Result_Boolean)                         return setError(dst, "If check needs to be a boolean");
-		if (check.result.val === true) {
-			return evaluateExpressionBlock(branch.block, iter, dst); 
+		const val = evaluateExpressionValue(branch.check, iter);
+		if (!val)                        return RETURN_ERROR;
+		if (val.type !== Result_Boolean) return setError(iter, branch.check, "If check needs to be a boolean");
+		if (val.val === true) {
+			return evaluateExpressionBlock(branch.block, iter); 
 		}
 	}
 
 	if (expr.else) {
-		return evaluateExpressionBlock(expr.else, iter, dst);
+		return evaluateExpressionBlock(expr.else, iter);
 	}
 
 	return RETURN_NONE;
 }
 
-function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (evaluateExpressionValue(expr.rhs, iter, dst) === RETURN_ERR) return RETURN_ERR;
+function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterator): ExprReturn {
+	let result; 
 
 	if (expr.op.type !== ast.OP_NONE) {
-		const lhs = newSlot();
-		if (evaluateExpressionValue(expr.lhs, iter, lhs) === RETURN_ERR) {
-			return setError(dst, lhs.error);
-		}
-		if (evaluateBinaryOperationOnResults(lhs.result, expr.op.type, dst.result, dst) !== RETURN_VAL) {
-			return RETURN_ERR;
-		}
+		// TODO: test - evaluation must be left -> right
+		const lhsVal = evaluateExpressionValue(expr.lhs, iter);
+		if (!lhsVal) return RETURN_ERROR;
+
+		let rhsVal = evaluateExpressionValue(expr.rhs, iter);
+		if (!rhsVal) return RETURN_ERROR;
+
+		if (evaluateBinaryOperationOnResults(expr, lhsVal, expr.op.type, rhsVal, iter) === RETURN_ERROR) return RETURN_ERROR;
+		result = iter.lastResult.result;
+		if (!result) return RETURN_ERROR;
+	} else {
+		result = evaluateExpressionValue(expr.rhs, iter);
+		if (!result) return RETURN_ERROR;
 	}
 
 	if (expr.op.assignment) {
-		if (expr.lhs.type !== ast.Expression_Identifier) {
-			return setError(dst, `Can't assign to ${ast.expressionToString(iter.program.code, expr)}`);
-		}
-
-		const varSlot = setOrCreateVar(iter, expr.lhs.name);
-		setResult(varSlot, dst.result);
-		dst.result = NOTHING;
-
-		return RETURN_NONE;
+		return evaluateAssignment(expr, iter, result);
 	} 
 
-	return RETURN_VAL;
+	return RETURN_NONE;
 }
 
-function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperatorType, rhs: Result, dst: Slot): ExprReturn {
+export type IndexableResult =
+ | ResultString
+ | ResultList
+ | ResultMap
+ | ResultVector
+ | ResultMatrix
+ ; 
+
+function asIndexableResult(result: Result): IndexableResult | undefined {
+	switch (result.type) {
+		case Result_String: return result;
+		case Result_List:   return result;
+		case Result_Map:    return result;
+		case Result_Vector: return result;
+		case Result_Matrix: return result;
+	}
+	return undefined;
+}
+
+function evaluateAssignment(expr: ast.BinaryExpression, iter: ProgramIterator, value: Result): ExprReturn {
+	if (expr.lhs.type === ast.Expression_Identifier) {
+		setOrCreateVar(iter, expr.lhs.name, value);
+		// Setting a variable means that it won't get returned. 
+		// This is actually one of the main semantics of the language.
+		// But I dont really want rust style naked returns though.
+		return RETURN_NONE;
+	}
+
+	if (expr.lhs.type === ast.Expression_Indexer) {
+		const targetResult = evaluateExpressionValue(expr.lhs.target, iter);
+		if (!targetResult) return RETURN_ERROR;
+
+		const target = asIndexableResult(targetResult);
+		if (!target) {
+			return setError(iter, expr.lhs.target, "Expression can't be indexed: " + ast.expressionToString(iter.program.code, expr.lhs.target));
+		}
+
+		const value = evaluateExpressionValue(expr.rhs, iter);
+		if (!value) return RETURN_ERROR;
+
+		switch(target.type) {
+			case Result_String: return setError(iter, expr.lhs.target, "Strings are immutable, and individual characters can't be assigned to.");
+			case Result_List: {
+				const index = evaluateExpressionValue(expr.lhs.indexes[0], iter);
+				if (!index) return RETURN_ERROR;
+		
+				if (index.type !== Result_Number)                    return setError(iter, expr.lhs.indexes[0], "List index should be a number");
+				if (index.val < 0 || index.val >= target.val.length) return setError(iter, expr.lhs.indexes[0], `Index ${index} out-of-bounds (${target.val.length})`);
+				target.val[index.val] = target;
+			} break;
+			case Result_Map: {
+				const index = evaluateExpressionValue(expr.lhs.indexes[0], iter);
+				if (!index) return RETURN_ERROR;
+
+				setMapKey(iter, target, index, expr.lhs.indexes[0], value);
+			} break;
+			case Result_Vector: {
+				const index = evaluateExpressionValue(expr.lhs.indexes[0], iter);
+				if (!index) return RETURN_ERROR;
+
+				if (index.type !== Result_Number)                    return setError(iter, expr.lhs.indexes[0], "Vector index should be a number");
+				if (value.type !== Result_Number)                    return setError(iter, expr.lhs.indexes[0], "Vector values should be numbers");
+				if (index.val < 0 || index.val >= target.val.length) return setError(iter, expr.lhs.indexes[0], `Index ${index} out-of-bounds (${target.val.length})`);
+				target.val[index.val] = value.val;
+			} break;
+			case Result_Matrix: {
+				if (expr.lhs.indexes.length === 1) {
+					if (value.type !== Result_Vector)         return setError(iter, expr.rhs, "Only vectors can be asigned to a column in a matrix");
+					if (value.val.length !== target.val.rows) return setError(iter, expr.lhs.indexes[0], `Vector length ${value.val.length} was not equal to the height (${target.val.rows}) of the matrix`);
+
+					const index = evaluateExpressionValue(expr.lhs.indexes[0], iter);
+					if (!index)                                        return RETURN_ERROR;
+					if (index.type !== Result_Number)                  return setError(iter, expr.lhs.indexes[0], "Matrix index should be a number");
+					if (index.val < 0 || index.val >= target.val.cols) return setError(iter, expr.lhs.indexes[0], `Index ${index} out-of-bounds (${target.val.cols} cols)`);
+
+					matrixSetAxis(target.val, value, index.val);
+				} else if (expr.lhs.indexes.length === 2) {
+					if (value.type !== Result_Number) return setError(iter, expr.rhs, "Matrix values should be numbers");
+
+					const row = evaluateExpressionValue(expr.lhs.indexes[0], iter);
+					if (!row) return RETURN_ERROR;
+					if (row.type !== Result_Number) return setError(iter, expr.lhs.indexes[0], "Matrix row should be a number");
+
+					const col = evaluateExpressionValue(expr.lhs.indexes[1], iter);
+					if (!col) return RETURN_ERROR;
+					if (col.type !== Result_Number) return setError(iter, expr.lhs.indexes[1], "Matrix column should be a number");
+
+					const idx = matrixGetIndex(target.val, row.val, col.val);
+					target.val.data[idx] = value.val;
+				}
+
+				return setError(iter, expr.lhs, "Too may index expressions for this matrix, just do [columnIdx] or [rowIdx, colIdx]");
+			} break;
+
+			default: assertNever(target);
+		}
+
+		return RETURN_NONE;
+	}
+
+	return setError(iter, expr.rhs, `Can't assign to ${ast.expressionToString(iter.program.code, expr.lhs)}`);
+}
+
+function evaluateBinaryOperationOnResults(expr: ast.BinaryExpression, lhs: Result, exprOp: ast.BinaryOperatorType, rhs: Result, iter: ProgramIterator): ExprReturn{
 	if (lhs.type === Result_Number && rhs.type === Result_Number) {
 		switch (exprOp) {
-			case ast.OP_ADD:             return setResultNumber(dst, lhs.val + rhs.val);
-			case ast.OP_SUBTRACT:        return setResultNumber(dst, lhs.val - rhs.val);
-			case ast.OP_MULTIPLY:        return setResultNumber(dst, lhs.val * rhs.val);
-			case ast.OP_DIVIDE:          return setResultNumber(dst, lhs.val / rhs.val);
-			case ast.OP_MODULO:          return setResultNumber(dst, lhs.val % rhs.val);
-			case ast.OP_BITWISE_AND:     return setResultNumber(dst, lhs.val & rhs.val);
-			case ast.OP_BITWISE_OR:      return setResultNumber(dst, lhs.val | rhs.val);
-			case ast.OP_BITWISE_XOR:     return setResultNumber(dst, lhs.val ^ rhs.val);
-			case ast.OP_LESS_THAN:       return setResultBoolean(dst, lhs.val < rhs.val);
-			case ast.OP_LESS_THAN_EQ:    return setResultBoolean(dst, lhs.val <= rhs.val);
-			case ast.OP_GREATER_THAN:    return setResultBoolean(dst, lhs.val > rhs.val);
-			case ast.OP_GREATER_THAN_EQ: return setResultBoolean(dst, lhs.val >= rhs.val);
-			case ast.OP_EQ:              return setResultBoolean(dst, lhs.val === rhs.val);
-			case ast.OP_NOT_EQ:          return setResultBoolean(dst, lhs.val !== rhs.val);
-			default:                     return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+			case ast.OP_ADD:             return setResultNumber(iter, lhs.val + rhs.val);
+			case ast.OP_SUBTRACT:        return setResultNumber(iter, lhs.val - rhs.val);
+			case ast.OP_MULTIPLY:        return setResultNumber(iter, lhs.val * rhs.val);
+			case ast.OP_DIVIDE:          return setResultNumber(iter, lhs.val / rhs.val);
+			case ast.OP_MODULO:          return setResultNumber(iter, lhs.val % rhs.val);
+			case ast.OP_BITWISE_AND:     return setResultNumber(iter, lhs.val & rhs.val);
+			case ast.OP_BITWISE_OR:      return setResultNumber(iter, lhs.val | rhs.val);
+			case ast.OP_BITWISE_XOR:     return setResultNumber(iter, lhs.val ^ rhs.val);
+			case ast.OP_LESS_THAN:       return setResultBoolean(iter, lhs.val < rhs.val);
+			case ast.OP_LESS_THAN_EQ:    return setResultBoolean(iter, lhs.val <= rhs.val);
+			case ast.OP_GREATER_THAN:    return setResultBoolean(iter, lhs.val > rhs.val);
+			case ast.OP_GREATER_THAN_EQ: return setResultBoolean(iter, lhs.val >= rhs.val);
+			case ast.OP_EQ:              return setResultBoolean(iter, lhs.val === rhs.val);
+			case ast.OP_NOT_EQ:          return setResultBoolean(iter, lhs.val !== rhs.val);
+			default:                     return setError(iter, expr, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
 
 	if (lhs.type === Result_Boolean && rhs.type === Result_Boolean) {
 		switch (exprOp) {
-			case ast.OP_LOGICAL_AND: return setResultBoolean(dst, lhs.val && rhs.val);
-			case ast.OP_LOGICAL_OR:  return setResultBoolean(dst, lhs.val || rhs.val);
-			case ast.OP_LOGICAL_XOR: return setResultBoolean(dst, lhs.val != rhs.val);
-			case ast.OP_EQ:          return setResultBoolean(dst, lhs.val === rhs.val);
-			case ast.OP_NOT_EQ:      return setResultBoolean(dst, lhs.val !== rhs.val);
-			default:                 return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+			case ast.OP_LOGICAL_AND: return setResultBoolean(iter, lhs.val && rhs.val);
+			case ast.OP_LOGICAL_OR:  return setResultBoolean(iter, lhs.val || rhs.val);
+			case ast.OP_LOGICAL_XOR: return setResultBoolean(iter, lhs.val != rhs.val);
+			case ast.OP_EQ:          return setResultBoolean(iter, lhs.val === rhs.val);
+			case ast.OP_NOT_EQ:      return setResultBoolean(iter, lhs.val !== rhs.val);
+			default:                 return setError(iter, expr, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
 
 	if (lhs.type === Result_String && rhs.type === Result_String) {
 		switch (exprOp) {
-			case ast.OP_ADD:     return setResultString(dst, lhs.val + rhs.val);
-			case ast.OP_EQ:      return setResultBoolean(dst, lhs.val === rhs.val);
-			case ast.OP_NOT_EQ:  return setResultBoolean(dst, lhs.val !== rhs.val);
-			default:             return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+			case ast.OP_ADD:     return setResultString(iter, lhs.val + rhs.val);
+			case ast.OP_EQ:      return setResultBoolean(iter, lhs.val === rhs.val);
+			case ast.OP_NOT_EQ:  return setResultBoolean(iter, lhs.val !== rhs.val);
+			default:             return setError(iter, expr, invalidOperatorError(exprOp, lhs, rhs));
 		}
 	}
 
 	if (lhs.type === Result_Vector && rhs.type === Result_Vector) {
 		if (rhs.val.length !== lhs.val.length) {
-			return setError(dst, `Vectors did not have the same sizes (${rhs.val.length} and ${lhs.val.length})`);
+			return setError(iter, expr, `Vectors did not have the same sizes (${rhs.val.length} and ${lhs.val.length})`);
 		}
 
 		const result: Result = {
@@ -601,96 +738,119 @@ function evaluateBinaryOperationOnResults(lhs: Result, exprOp: ast.BinaryOperato
 			case ast.OP_GREATER_THAN_EQ: { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] >=  rhs.val[i] ? 1 : 0; } } break;
 			case ast.OP_EQ:              { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] === rhs.val[i] ? 1 : 0; } } break;
 			case ast.OP_NOT_EQ:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] !== rhs.val[i] ? 1 : 0; } } break;
-			default: return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+			default: return setError(iter, expr, invalidOperatorError(exprOp, lhs, rhs));
 		}
 
-		return setResult(dst, result);
+		return setResult(iter, result);
 	}
 
 	if (lhs.type === Result_Matrix && rhs.type === Result_Matrix) {
-		if (rhs.rows !== lhs.rows) return setError(dst, `Matrices did not have the same row count`);
-		if (rhs.cols !== lhs.cols) return setError(dst, `Matrices did not have the same column count`);
+		if (rhs.val.rows !== lhs.val.rows) return setError(iter, expr, `Matrices did not have the same row count`);
+		if (rhs.val.cols !== lhs.val.cols) return setError(iter, expr, `Matrices did not have the same column count`);
 
 		const result: Result = {
 			type: Result_Matrix,
-			rows: rhs.rows,
-			cols: rhs.cols,
-			val: Array(rhs.val.length).fill(0)
+			val: {
+				rows: rhs.val.rows,
+				cols: rhs.val.cols,
+				data: Array(rhs.val.data.length).fill(0)
+			}
 		};
 
 		switch (exprOp) {
-			case ast.OP_ADD:             { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] +   rhs.val[i]; } } break;
-			case ast.OP_SUBTRACT:        { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] -   rhs.val[i]; } } break;
-			case ast.OP_MODULO:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] %   rhs.val[i]; } } break;
-			case ast.OP_MULTIPLY:        { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] *   rhs.val[i]; } } break;
-			case ast.OP_DIVIDE:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] /   rhs.val[i]; } } break;
-			case ast.OP_LOGICAL_AND:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) &&  (!!rhs.val[i])) ? 1 : 0} } break;
-			case ast.OP_LOGICAL_OR:      { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) &&  (!!rhs.val[i])) ? 1 : 0} } break;
-			case ast.OP_LOGICAL_XOR:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = (!!(lhs.val[i]) !== (!!rhs.val[i])) ? 1 : 0} } break;
-			case ast.OP_BITWISE_AND:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] & rhs.val[i] } } break;
-			case ast.OP_BITWISE_OR:      { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] | rhs.val[i] } } break;
-			case ast.OP_BITWISE_XOR:     { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] ^ rhs.val[i] } } break;
-			case ast.OP_LESS_THAN:       { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] <   rhs.val[i] ? 1 : 0; } } break;
-			case ast.OP_LESS_THAN_EQ:    { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] <=  rhs.val[i] ? 1 : 0; } } break;
-			case ast.OP_GREATER_THAN:    { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] >   rhs.val[i] ? 1 : 0; } } break;
-			case ast.OP_GREATER_THAN_EQ: { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] >=  rhs.val[i] ? 1 : 0; } } break;
-			case ast.OP_EQ:              { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] === rhs.val[i] ? 1 : 0; } } break;
-			case ast.OP_NOT_EQ:          { for (let i = 0; i < rhs.val.length; i++) { result.val[i] = lhs.val[i] !== rhs.val[i] ? 1 : 0; } } break;
-			default: return setError(dst, invalidOperatorError(exprOp, lhs, rhs));
+			case ast.OP_ADD:             { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] +   rhs.val.data[i]; } } break;
+			case ast.OP_SUBTRACT:        { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] -   rhs.val.data[i]; } } break;
+			case ast.OP_MODULO:          { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] %   rhs.val.data[i]; } } break;
+			case ast.OP_MULTIPLY:        { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] *   rhs.val.data[i]; } } break;
+			case ast.OP_DIVIDE:          { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] /   rhs.val.data[i]; } } break;
+			case ast.OP_LOGICAL_AND:     { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = (!!(lhs.val.data[i]) &&  (!!rhs.val.data[i])) ? 1 : 0} } break;
+			case ast.OP_LOGICAL_OR:      { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = (!!(lhs.val.data[i]) &&  (!!rhs.val.data[i])) ? 1 : 0} } break;
+			case ast.OP_LOGICAL_XOR:     { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = (!!(lhs.val.data[i]) !== (!!rhs.val.data[i])) ? 1 : 0} } break;
+			case ast.OP_BITWISE_AND:     { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] & rhs.val.data[i] } } break;
+			case ast.OP_BITWISE_OR:      { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] | rhs.val.data[i] } } break;
+			case ast.OP_BITWISE_XOR:     { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] ^ rhs.val.data[i] } } break;
+			case ast.OP_LESS_THAN:       { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] <   rhs.val.data[i] ? 1 : 0; } } break;
+			case ast.OP_LESS_THAN_EQ:    { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] <=  rhs.val.data[i] ? 1 : 0; } } break;
+			case ast.OP_GREATER_THAN:    { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] >   rhs.val.data[i] ? 1 : 0; } } break;
+			case ast.OP_GREATER_THAN_EQ: { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] >=  rhs.val.data[i] ? 1 : 0; } } break;
+			case ast.OP_EQ:              { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] === rhs.val.data[i] ? 1 : 0; } } break;
+			case ast.OP_NOT_EQ:          { for (let i = 0; i < rhs.val.data.length; i++) { result.val.data[i] = lhs.val.data[i] !== rhs.val.data[i] ? 1 : 0; } } break;
+			default: return setError(iter, expr, invalidOperatorError(exprOp, lhs, rhs));
 		}
 
-		return setResult(dst, result);
+		return setResult(iter, result);
 	}
 
-	return setError(dst, `Can't apply ${ast.operatorToString(exprOp)} between ${resultTypeToString(lhs.type)} and ${resultTypeToString(rhs.type)}`);A
+	return setError(iter, expr, `Can't apply ${ast.operatorToString(exprOp)} between ${resultTypeToString(lhs.type)} and ${resultTypeToString(rhs.type)}`);
 }
 
-function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator, dst: Slot): ExprReturn {
+function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator): ExprReturn {
 	const val = getVar(iter, expr.name);
 	if (!val) {
-		return setError(dst, "Variable not found: " + expr.name);
+		return setError(iter, expr, "Variable not found: " + expr.name);
 	}
 
-	return setResult(dst, val);
+	return setResult(iter, val);
 }
 
-function evaluateForLoop(expr: ast.ForLoop, iter: ProgramIterator, dst: Slot): ExprReturn {
+function evaluateForLoop(expr: ast.ForLoop, iter: ProgramIterator): ExprReturn {
 	let rt: ExprReturn = RETURN_NONE;
 
 	pushScope(iter, SCOPE_ALLOW_CONTINUE_BREAK); {
-		rt = evaluateForLoopInternal(expr, iter, dst);
+		rt = evaluateForLoopInternal(expr, iter);
 	} popScope(iter);
 
 	return rt;
 }
 
-function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, dst: Slot): ExprReturn {
+const LOOP_NOTHING  = 0;
+const LOOP_BREAK    = 1;
+const LOOP_CONTINUE = 2;
+const LOOP_RETURN   = 3;
+
+function evaluateLoopStatementReturn(iter: ProgramIterator, rt: ExprReturn): number {
+	if (rt === RETURN_ERROR) return RETURN_ERROR;
+	if (rt === RETURN_RESULT) {
+		if (iter.lastResult.result === BREAK) {
+			setResult(iter, NOTHING);
+			return LOOP_BREAK;
+		}
+
+		if (iter.lastResult.result === CONTINUE) {
+			setResult(iter, NOTHING);
+			return LOOP_CONTINUE;
+		}
+
+		return LOOP_RETURN;
+	}
+
+	return LOOP_NOTHING;
+}
+
+function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator): ExprReturn {
 	if (expr.toIterate.type === ast.Expression_ForLoopRange) {
-		if (expr.varNames.length !== 1) return setError(dst, "Range for-loop can only assign to 1 variable");
+		if (expr.varNames.length !== 1) return setError(iter, expr.toIterate, "Range for-loop can only assign to 1 variable");
 
 		const range    = expr.toIterate;
 		const rangeVar = expr.varNames[0];
 
-		const loopVarSlot = setOrCreateVar(iter, rangeVar.name);
-
-		const rtStart = evaluateExpressionValue(range.lo, iter, loopVarSlot);
-		if (rtStart === RETURN_ERR) return setError(dst, loopVarSlot.error);
-		if (loopVarSlot.result.type !== Result_Number) return setError(dst, "For loop range start needs to be a number");
-
-		const end = newSlot();
+		const startResult = evaluateExpressionValue(range.lo, iter);
+		if (!startResult)                       return RETURN_ERROR;
+		if (startResult.type !== Result_Number) return setError(iter, range.lo, "For loop range start needs to be a number");
+	
+		setOrCreateVar(iter, rangeVar.name, startResult);
 
 		outer: while (true) {
-			const rtEnd = evaluateExpressionValue(range.hi, iter, end);
-			if (rtEnd === RETURN_ERR) return setError(dst, end.error);
-			if (end.result.type !== Result_Number) return setError(dst, "For loop range end needs to be a number");
+			const endResult = evaluateExpressionValue(range.hi, iter);
+			if (!endResult)                       return RETURN_ERROR;
+			if (endResult.type !== Result_Number) return setError(iter, range.hi, "For loop range end needs to be a number");
 
-			let endVal = end.result.val;
-
-			let nextLoopVal = loopVarSlot.result.val;
+			const endVal    = endResult.val;
+			let nextLoopVal = startResult.val;
 
 			switch (range.rangeType) {
 				case ast.RANGE_LT: {
-					if (loopVarSlot.result.val >= endVal) break outer;
+					if (nextLoopVal >= endVal) break outer;
 					nextLoopVal += 1;
 				} break;
 				case ast.RANGE_LTE: {
@@ -710,230 +870,206 @@ function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator, dst: 
 				}
 			}
 
-			const rt = evaluateExpressionBlock(expr.statements, iter, dst);
-			if (rt === RETURN_ERR) return RETURN_ERR;
-			if (rt === RETURN_VAL) {
-				if (dst.result === BREAK) return setResult(dst, NOTHING);
-				if (dst.result === CONTINUE) {
-					setResult(dst, NOTHING);
-					loopVarSlot.result.val = nextLoopVal;
-					continue;
-				}
-			}
+			const rt = evaluateExpressionBlock(expr.statements, iter);
+			if (rt === RETURN_ERROR) return RETURN_ERROR;
 
-			loopVarSlot.result.val = nextLoopVal;
+			startResult.val = nextLoopVal;
+
+			const ls = evaluateLoopStatementReturn(iter, rt);
+			if (ls === LOOP_BREAK)    break;
+			if (ls === LOOP_CONTINUE) continue;
+			if (ls === LOOP_RETURN)   return RETURN_ERROR;
 		}
 
 		return RETURN_NONE;
 	}
 
-	if (evaluateExpression(expr.toIterate, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	const toIterate = dst.result;
+	const toIterate = evaluateExpressionValue(expr.toIterate, iter);
+	if (!toIterate) return RETURN_ERROR;
 	if (toIterate.type === Result_List) {
 		if (expr.varNames.length !== 1 && expr.varNames.length !== 2) {
-			return setError(dst, "List iterator needs 1 or 2 loop vars (val, idx)");
+			return setError(iter, expr, "List iterator needs 1 or 2 loop vars (val, idx)");
 		}
 
 		const list = toIterate.val;
 		for (let i = 0; i < list.length; i++) {
 			const val = list[i];
 
-			const valSlot = setOrCreateVar(iter, expr.varNames[0].name);
-			setResult(valSlot, val);
-
+			setOrCreateVar(iter, expr.varNames[0].name, val);
 			if (expr.varNames.length === 2) {
-				const idxSlot = setOrCreateVar(iter, expr.varNames[1].name);
-				setResultNumber(idxSlot, i);
+				setOrCreateVar(iter, expr.varNames[1].name, newNumber(i));
 			}
 
-			const rt = evaluateExpressionBlock(expr.statements, iter, dst);
-			if (rt === RETURN_ERR) return RETURN_ERR;
-			if (rt === RETURN_VAL) {
-				if (dst.result === BREAK) return setResult(dst, NOTHING);
-				if (dst.result === CONTINUE) {
-					setResult(dst, NOTHING);
-					continue;
-				}
-			}
+			const rt = evaluateExpressionBlock(expr.statements, iter);
+			if (rt === RETURN_ERROR) return RETURN_ERROR;
+			const ls = evaluateLoopStatementReturn(iter, rt);
+			if (ls === LOOP_BREAK)    break;
+			if (ls === LOOP_CONTINUE) continue;
+			if (ls === LOOP_RETURN)   return RETURN_ERROR;
 		}
 
 		return RETURN_NONE;
-	} 
+	}
 
 	if (toIterate.type === Result_Map) {
 		if (expr.varNames.length !== 2) {
-			return setError(dst, "List iterator needs 2 loop vars (k, v)");
+			return setError(iter, expr, "List iterator needs 2 loop vars (k, v)");
 		}
 
 		const map = toIterate.val;
 		for (const [, v] of map) {
-			const kSlot = setOrCreateVar(iter, expr.varNames[0].name);
-			setResult(kSlot, v.key);
-
-			const vSlot = setOrCreateVar(iter, expr.varNames[1].name);
-			setResult(vSlot, v.val);
-
-			const rt = evaluateExpressionBlock(expr.statements, iter, dst);
-			if (rt === RETURN_ERR) return RETURN_ERR;
-			if (rt === RETURN_VAL) {
-				if (dst.result === BREAK) return setResult(dst, NOTHING);
-				if (dst.result === CONTINUE) {
-					setResult(dst, NOTHING);
-					continue;
-				}
-			}
+			setOrCreateVar(iter, expr.varNames[0].name, v.key);
+			setOrCreateVar(iter, expr.varNames[1].name, v.val);
+			
+			const rt = evaluateExpressionBlock(expr.statements, iter);
+			if (rt === RETURN_ERROR) return RETURN_ERROR;
+			const ls = evaluateLoopStatementReturn(iter, rt);
+			if (ls === LOOP_BREAK)    break;
+			if (ls === LOOP_CONTINUE) continue;
+			if (ls === LOOP_RETURN)   return RETURN_ERROR;
 		}
 
 		return RETURN_NONE;
 	}
 
-	return setError(dst, "Can't iterate an expression of type " + resultTypeToString(toIterate.type));
+	return setError(iter, expr.toIterate, "Can't iterate an expression of type " + resultTypeToString(toIterate.type));
 }
 
-function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator, dst: Slot): ExprReturn {
-	const targetDst = iter.temp1;
-	if (evaluateExpression(expr.index, iter, dst) === RETURN_ERR)        return RETURN_ERR;
-	if (evaluateExpression(expr.target, iter, targetDst) === RETURN_ERR) return setError(dst, targetDst.error);
+function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator): ExprReturn {
+	const targetResult = evaluateExpressionValue(expr.target, iter);
+	if (!targetResult) return RETURN_ERROR;
 
-	const indexResult = dst.result
-	const targetResult = targetDst.result;
 
 	if (targetResult.type === Result_List) {
+		const indexResult = evaluateExpressionValue(expr.indexes[0], iter);
+		if (!indexResult) return RETURN_ERROR;
 		if (indexResult.type !== Result_Number) {
-			return setError(dst, "List indexer needs to be a number");
+			return setError(iter, expr.indexes[0], "List indexer needs to be a number");
 		}
+
 		const index = Math.floor(indexResult.val);
 		if (index < 0 || index >= targetResult.val.length) {
-			return setError(dst, "Index was out of bounds: " + index + "/" + targetResult.val.length);
+			return setError(iter, expr.indexes[0], "Index was out of bounds: " + index + "/" + targetResult.val.length);
 		}
+
 		const value = targetResult.val[index];
-		return setResult(dst, value);
+		return setResult(iter, value);
 	}
 
 	if (targetResult.type === Result_Map) {
+		const indexResult = evaluateExpressionValue(expr.indexes[0], iter);
+		if (!indexResult) return RETURN_ERROR;
+
 		const key = getMapKey(indexResult);
 		if (key === undefined) {
-			return setError(dst, "Invalid map key");
+			return setError(iter, expr.indexes[0], "Invalid map key");
 		}
 
 		const val = targetResult.val.get(key);
-		if (val === undefined) return setResult(dst, NOTHING);
-		return setResult(dst, val.val);
+		if (val === undefined) return setResult(iter, NOTHING);
+		return setResult(iter, val.val);
 	}
 
-	return setError(dst, resultTypeToString(targetResult.type) + " cannot be indexed");
+	return setError(iter, expr.target, resultTypeToString(targetResult.type) + " cannot be indexed");
 }
 
-function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator, dst: Slot): ExprReturn {
+function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator): ExprReturn {
 	switch (expr.typename.name) {
 		case "list": {
 			const result: Result = { type: Result_List, val: [] };
 
 			for (const arg of expr.args) {
-				if (evaluateExpressionValue(arg, iter, dst) === RETURN_ERR) return RETURN_ERR;
-				// We'll allow empty values in the list, why not.
-				result.val.push(cloneResult(dst.result));
+				const argEvaluated = evaluateExpressionValue(arg, iter);
+				if (!argEvaluated) return RETURN_ERROR;
+				result.val.push(argEvaluated);
 			}
 
-			return setResult(dst, result);
+			return setResult(iter, result);
 		} break;
 		case "map": {
 			const result: Result = { type: Result_Map, val: new Map() };
 
 			// for now, we'll just ignore type args. xd
-			const slotKey = newSlot();
-			const slotVal = newSlot();
 			for (const arg of expr.args) {
 				if (
 					arg.type !== ast.Expression_BinaryExpression ||
 					!arg.op.assignment || 
 					arg.op.type !== ast.OP_NONE
 				) {
-					return setError(dst, "Maps should be initialized like { key=value, key=value, etc. }");
+					return setError(iter, arg, "Maps should be initialized like { key=value, key=value, etc. }");
 				} 
-				
-				if (evaluateExpression(arg.lhs, iter, slotKey) === RETURN_ERR) return setError(dst, slotKey.error);
-				const mapKey = getMapKey(slotKey.result)
-				if (mapKey === undefined) {
-					return setError(dst, `type ${resultTypeToString(slotKey.result.type)} can't be used as a map key`);
-				}
 
-				if (evaluateExpression(arg.rhs, iter, slotVal) === RETURN_ERR) return setError(dst, slotVal.error);
+				const key = evaluateExpressionValue(arg.lhs, iter);
+				if (!key) return RETURN_ERROR;
 
-				if (result.val.has(mapKey)) return setError(dst, "Map initializer cannot contain duplicate keys");
+				const val = evaluateExpressionValue(arg.rhs, iter);
+				if (!val) return RETURN_ERROR;
 
-				const slot = { key: slotKey.result, val: cloneResult(slotVal.result) };
-				result.val.set(mapKey, slot);
+				if (setMapKey(iter, result, key, arg.lhs, val, true) === RETURN_ERROR) return RETURN_ERROR;
 			}
 
-			return setResult(dst, result);
+			return setResult(iter, result);
 		} break;
 		case "vec": {
 			const result: Result = { type: Result_Vector, val: [] };
 
 			for (const arg of expr.args) {
-				if (evaluateExpressionValue(arg, iter, dst) === RETURN_ERR) return RETURN_ERR;
-				if (dst.result.type !== Result_Number)                      return setError(dst, "Vectors can only be initialized with numbers");
-				result.val.push(dst.result.val);
+				const val = evaluateExpressionValue(arg, iter);
+				if (!val)                       return RETURN_ERROR;
+				if (val.type !== Result_Number) return setError(iter, arg, "Vectors can only be initialized with numbers");
+				result.val.push(val.val);
 			}
 
-			return setResult(dst, result);
+			return setResult(iter, result);
 		} break;
 		case "mat": {
-			if (!expr.typeArgs)                                         return setError(dst, "Need type args, e.g mat<3, 4>");
-			if (expr.typeArgs.length !== 2)                             return setError(dst, "Need 2 type args, e.g mat<3, 4>");
-			if (expr.typeArgs[0].type !== ast.Expression_NumberLiteral) return setError(dst, "Need 2 numeric type args, e.g mat<3, 4>");
-			if (expr.typeArgs[1].type !== ast.Expression_NumberLiteral) return setError(dst, "Need 2 numeric type args, e.g mat<3, 4>");
+			if (!expr.typeArgs)                                         return setError(iter, expr, "Need type args, e.g mat<3, 4>");
+			if (expr.typeArgs.length !== 2)                             return setError(iter, expr, "Need 2 type args, e.g mat<3, 4>");
+			if (expr.typeArgs[0].type !== ast.Expression_NumberLiteral) return setError(iter, expr.typeArgs[0], "Need 2 numeric type args, e.g mat<3, 4>");
+			if (expr.typeArgs[1].type !== ast.Expression_NumberLiteral) return setError(iter, expr.typeArgs[1], "Need 2 numeric type args, e.g mat<3, 4>");
 
 			const rows = expr.typeArgs[0].val;
 			const cols = expr.typeArgs[1].val;
 
 			if (expr.args.length !== rows * cols && expr.args.length !== 1) {
-				return setError(dst, `Need to initialize the matrix with exactly 1 or ${rows * cols} values`);
+				return setError(iter, expr, `Need to initialize the matrix with exactly 1 or ${rows * cols} values`);
 			}
 			
 			const result: Result = {
 				type: Result_Matrix,
-				rows: rows,
-				cols: cols,
-				val: Array(rows * cols).fill(0),
+				val: {
+					rows: rows,
+					cols: cols,
+					data: Array(rows * cols).fill(0),
+				},
 			};
 
 			if (expr.args.length === 1) {
-				if (evaluateExpressionValue(expr.args[0], iter, dst) === RETURN_ERR) return RETURN_ERR;
-				if (dst.result.type !== Result_Number) return setError(dst, "Matrix diagonal can only be initialized with numbers");
-				const diagonalValue = dst.result.val;
+				const diagonalValue = evaluateExpressionValue(expr.args[0], iter);
+				if (!diagonalValue)                       return RETURN_ERROR;
+				if (diagonalValue.type !== Result_Number) return setError(iter, expr.args[0], "Matrix diagonal can only be initialized with numbers");
 				
 				const minSize = Math.min(rows, cols);
 				for (let i = 0; i < minSize; i++) {
-					const idx = matrixGetIdx(result, i, i);
-					result.val[idx] = diagonalValue;
+					const idx = matrixGetIndex(result.val, i, i);
+					result.val.data[idx] = diagonalValue.val;
 				}
 			} else {
 				for (let i = 0; i < expr.args.length; i++) {
 					const arg = expr.args[i];
-					if (evaluateExpressionValue(arg, iter, dst) === RETURN_ERR) return RETURN_ERR;
-					if (dst.result.type !== Result_Number) return setError(dst, "Matrix element can only be initialized with numbers");
-					result.val[i] = dst.result.val;
+					const val = evaluateExpressionValue(arg, iter);
+					if (!val)                       return RETURN_ERROR;
+					if (val.type !== Result_Number) return setError(iter, arg, "Matrix element can only be initialized with numbers");
+					result.val.data[i] = val.val;
 				}
 			}
 
-			return setResult(dst, result);
+			return setResult(iter, result);
 		} break;
 	}
 
-	return setError(dst, `Don't know how to initialize this type: ${expr.typename.name}`);
+	return setError(iter, expr, `Don't know how to initialize this type: ${expr.typename.name}`);
 }
-
-// Gets the dimension of a vector/matrix
-function getDimensionTypeArg(expr: ast.TypeInitializer, idx: number, dst: Slot): number | undefined {
-	assert(!!expr.typeArgs);
-	if (expr.typeArgs[idx].type !== ast.Expression_NumberLiteral) { setError(dst, `Type arg ${idx} needs to be numeric`); return undefined; }
-	if (expr.typeArgs[idx].val % 0 !== 0) { setError(dst, `Type arg ${idx} needs to be numeric`); return undefined; }
-	if (expr.typeArgs[idx].val > 1)       { setError(dst, `Type arg ${idx} needs to be > 1`); return undefined; }
-	return expr.typeArgs[idx].val;
-}
-
 
 export function getMapKey(result: Result): ValidMapKey | undefined {
 	switch (result.type) {
@@ -945,6 +1081,26 @@ export function getMapKey(result: Result): ValidMapKey | undefined {
 	return undefined;
 }
 
+export function setMapKey(
+	iter: ProgramIterator,
+	map: ResultMap,
+	key: Result, keyExpr: ast.Expression,
+	val: Result, 
+	avoidDuplicates=false
+): ExprReturn {
+	const validMapKey = getMapKey(key)
+	if (validMapKey === undefined) {
+		return setError(iter, keyExpr, `type ${resultTypeToString(key.type)} can't be used as a map key`);
+	}
+
+	if (avoidDuplicates && map.val.has(validMapKey)) {
+		return setError(iter, keyExpr, "Map initializer cannot contain duplicate keys");
+	}
+
+	map.val.set(validMapKey, { key: key, val: val });
+	return RETURN_NONE;
+}
+
 export function resultToString(result: Result): string {
 	switch (result.type) {
 		case Result_Nothing:  return "<nothing>";
@@ -953,16 +1109,17 @@ export function resultToString(result: Result): string {
 		case Result_Boolean:  return "" + result.val;
 		// TODO: consider making it possible to know the name of the function when we do <ident> = fn() {...}
 		case Result_Function: return "fn (" + result.val.args.map(a => a.name).join(", ") + ")"; 
+		case Result_BuiltinFunction: return "builtin fn " + result.val.name + ""; 
 		case Result_List:     return "list[" + result.val.map(resultToString).join(", ") + "]";
 		case Result_Map:      return "map[" + [...result.val.values()].map((e) => resultToString(e.key) + " -> " + resultToString(e.val)).join(", ") + "]";
 		case Result_Vector:   return "vec[" + result.val.map(v => "" + v).join(", ") + "]";
-		case Result_Matrix:   return "mat[" + matrixValuesToString(result) + "\n]";
+		case Result_Matrix:   return "mat[" + matrixValuesToString(result.val) + "\n]";
 		default: assertNever(result);
 	}
 	return "unknown string representation";
 }
 
-function matrixValuesToString(mat: ResultMatrix): string {
+function matrixValuesToString(mat: Matrix): string {
 	let sb: string[] = [];
 
 	for (let row = 0; row < mat.rows; row++) {
@@ -970,8 +1127,8 @@ function matrixValuesToString(mat: ResultMatrix): string {
 		for (let col = 0; col < mat.cols; col++) {
 			if (col !== 0) sb.push(", ");
 
-			const idx = matrixGetIdx(mat, row, col);
-			sb.push("" + mat.val[idx]);
+			const idx = matrixGetIndex(mat, row, col);
+			sb.push("" + mat.data[idx]);
 		}
 		sb.push("],");
 	}
@@ -980,6 +1137,41 @@ function matrixValuesToString(mat: ResultMatrix): string {
 }
 
 
-export function matrixGetIdx(mat: ResultMatrix, row: number, col: number): number {
+export function matrixGetIndex(mat: Matrix, row: number, col: number): number {
 	return row * mat.cols + col;
 }
+
+export function matrixSetAxis(mat: Matrix, vec: ResultVector, col: number) {
+	for (let i = 0; i < vec.val.length; i++) {
+		const idx = matrixGetIndex(mat, i, col);
+		mat.data[idx] = vec.val[i];
+	}
+}
+
+const builtins: Record<string, Result> = {
+	"nothing":    NOTHING, 
+	"print":      { type: Result_BuiltinFunction, val: print },
+	"len":        { type: Result_BuiltinFunction, val: len },
+	"math_max":   { type: Result_BuiltinFunction, val: math_max },
+	"math_min":   { type: Result_BuiltinFunction, val: math_min },
+	"math_clamp": { type: Result_BuiltinFunction, val: math_clamp },
+	"math_sin":   { type: Result_BuiltinFunction, val: math_sin },
+	"math_cos":   { type: Result_BuiltinFunction, val: math_cos },
+	"math_tan":   { type: Result_BuiltinFunction, val: math_tan },
+	"math_asin":  { type: Result_BuiltinFunction, val: math_asin },
+	"math_acos":  { type: Result_BuiltinFunction, val: math_acos },
+	"math_atan":  { type: Result_BuiltinFunction, val: math_atan },
+	"math_atan2": { type: Result_BuiltinFunction, val: math_atan2 },
+	"math_log2":  { type: Result_BuiltinFunction, val: math_log2 },
+	"math_ln":    { type: Result_BuiltinFunction, val: math_ln },
+	"math_pow":   { type: Result_BuiltinFunction, val: math_pow },
+	"math_sqrt":  { type: Result_BuiltinFunction, val: math_sqrt },
+	"mul":        { type: Result_BuiltinFunction, val: mul },
+	"transpose":  { type: Result_BuiltinFunction, val: transpose },
+	"inverse":    { type: Result_BuiltinFunction, val: inverse },
+}
+
+export function getBuiltin(name: string): Result | undefined {
+	return builtins[name];
+}
+

@@ -1,5 +1,5 @@
 import { im, ImCache, imdom } from "./im-js";
-import "./pl2";
+import { pl2, ast } from "./pl2";
 
 function imApp(c: ImCache) {
 	if (im.isFirstishRender(c)) {

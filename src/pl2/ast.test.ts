@@ -152,13 +152,13 @@ addTestGroup("For loops", [ast.parseForLoop], () => {
 
 addTestGroup("Return statement", [ast.parseAnyReturnStatement], () => {
 	addTest("None", r => {
-		const expr = ast.parseExpressionFromText("return()");
+		const expr = ast.parseExpressionFromText("return nothing");
 		testAssert(r, expr?.type === ast.Expression_Return);
-		testEqual(r, expr.expr, undefined)
+		test(r, isIdentifier(expr.expr, "nothing"))
 	});
 
 	addTest("Normal", r => {
-		const expr = ast.parseExpressionFromText("return(a)");
+		const expr = ast.parseExpressionFromText("return a");
 		testAssert(r, expr?.type === ast.Expression_Return);
 		test(r, isIdentifier(expr.expr!, "a"))
 	});
@@ -269,7 +269,7 @@ addTestGroup("Binary expressions", [ast.parseExpression, ast.parseBinaryExpressi
 			test(r, isIdentifier(expr.lhs, "x"))
 			testAssert(r, expr.rhs.type === ast.Expression_Indexer);
 			test(r, isIdentifier(expr.rhs.target, "row"));
-			test(r, isIdentifier(expr.rhs.index, "i"));
+			test(r, isIdentifier(expr.rhs.indexes[0], "i"));
 		});
 
 		addTest("Multiple indexes", r => {
@@ -281,8 +281,8 @@ addTestGroup("Binary expressions", [ast.parseExpression, ast.parseBinaryExpressi
 			testAssert(r, expr.rhs.type === ast.Expression_Indexer);
 			testAssert(r, expr.rhs.target.type === ast.Expression_Indexer);
 			test(r, isIdentifier(expr.rhs.target.target, "row"));
-			test(r, isIdentifier(expr.rhs.target.index, "i"));
-			test(r, isIdentifier(expr.rhs.index, "j"));
+			test(r, isIdentifier(expr.rhs.target.indexes[0], "i"));
+			test(r, isIdentifier(expr.rhs.indexes[0], "j"));
 		});
 	});
 });
@@ -531,8 +531,8 @@ addTestGroup("String parsing", [ast.parseStringLiteral, ast.computeStringForStri
 
 
 addTestGroup("ParseFunctionDefinition", [ast.parseFunctionDefinition], () => {
-	addTest("basic", r => {
-		const expr = ast.parseExpressionFromText(`fn(a, b, c) { y = x + 1 return(y) }`);
+	addTest("functions", r => {
+		const expr = ast.parseExpressionFromText(`fn (a, b, c) { y = x + 1 return(y) }`);
 		testAssert(r, !!expr, "0");
 		testAssert(r, expr?.type === ast.Expression_FunctionDefinition, "1");
 		testEqual(r, expr.args.length, 3)
@@ -543,6 +543,21 @@ addTestGroup("ParseFunctionDefinition", [ast.parseFunctionDefinition], () => {
 		testEqual(r, expr.body[0].type, ast.Expression_BinaryExpression);
 		testEqual(r, expr.body[1].type, ast.Expression_Return);
 	})
+
+	// I only wanted to have anonymous functions at first, but old habits die hard
+	addTest("normal functions", r => {
+		const expr = ast.parseExpressionFromText(`fn do_the_thing(a, b, c) { y = x + 1 return(y) }`);
+		testAssert(r, !!expr, "0");
+		testAssert(r, expr?.type === ast.Expression_FunctionDefinition, "1");
+		testEqual(r, expr.args.length, 3)
+		test(r, isIdentifier(expr.args[0].name, "a"))
+		test(r, isIdentifier(expr.args[1].name, "b"))
+		test(r, isIdentifier(expr.args[2].name, "c"))
+		testEqual(r, expr.body.length, 2);
+		testEqual(r, expr.body[0].type, ast.Expression_BinaryExpression);
+		testEqual(r, expr.body[1].type, ast.Expression_Return);
+	})
+
 });
 
 addTestGroup("Indexers", [ast.parseIndexerExpression], () => {
@@ -550,7 +565,7 @@ addTestGroup("Indexers", [ast.parseIndexerExpression], () => {
 		const expr = ast.parseExpressionFromText(`a[0]`);
 		testAssert(r, expr?.type === ast.Expression_Indexer);
 		testAssert(r, expr.target.type === ast.Expression_Identifier);
-		testAssert(r, expr.index.type === ast.Expression_NumberLiteral);
+		testAssert(r, expr.indexes[0].type === ast.Expression_NumberLiteral);
 	});
 
 	addTest("With whitespace", r => {
@@ -559,27 +574,27 @@ addTestGroup("Indexers", [ast.parseIndexerExpression], () => {
 		]`);
 		testAssert(r, expr?.type === ast.Expression_Indexer);
 		testAssert(r, expr.target.type === ast.Expression_Identifier);
-		testAssert(r, expr.index.type === ast.Expression_NumberLiteral);
+		testAssert(r, expr.indexes[0].type === ast.Expression_NumberLiteral);
 	});
 
 	addTest("more complex expression", r => {
 		const expr = ast.parseExpressionFromText(`a[b[c[0]]]`);
 		testAssert(r, !!expr);
 		testAssert(r, expr.type === ast.Expression_Indexer);
-		testAssert(r, expr.index.type === ast.Expression_Indexer);
-		testAssert(r, expr.index.index.type === ast.Expression_Indexer);
-		testAssert(r, expr.index.index.index.type === ast.Expression_NumberLiteral);
+		testAssert(r, expr.indexes[0].type === ast.Expression_Indexer);
+		testAssert(r, expr.indexes[0].indexes[0].type === ast.Expression_Indexer);
+		testAssert(r, expr.indexes[0].indexes[0].indexes[0].type === ast.Expression_NumberLiteral);
 	});
 
 	addTest("Chaining", r => {
 		const expr = ast.parseExpressionFromText(`a[0][1]`);
 		testAssert(r, !!expr);
 		testAssert(r, expr.type === ast.Expression_Indexer);
-		testAssert(r, expr.index.type === ast.Expression_NumberLiteral);
-		testEqual(r, expr.index.val, 1);
+		testAssert(r, expr.indexes[0].type === ast.Expression_NumberLiteral);
+		testEqual(r, expr.indexes[0].val, 1);
 		testAssert(r, expr.target.type === ast.Expression_Indexer);
-		testAssert(r, expr.target.index.type === ast.Expression_NumberLiteral);
-		testAssert(r, expr.target.index.val === 0);
+		testAssert(r, expr.target.indexes[0].type === ast.Expression_NumberLiteral);
+		testAssert(r, expr.target.indexes[0].val === 0);
 	});
 });
 

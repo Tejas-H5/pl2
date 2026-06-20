@@ -200,7 +200,7 @@ export type BooleanLiteral = ExpressionBase & {
 export type Indexer = ExpressionBase & {
 	type: typeof Expression_Indexer;
 	target: Expression;
-	index: Expression;
+	indexes: Expression[];
 };
 
 export type FunctionArgument = {
@@ -216,11 +216,12 @@ export type FunctionDefinition = ExpressionBase & {
 	type: typeof Expression_FunctionDefinition;
 	args: FunctionArgument[];
 	body: Expression[];
+	name: Identifier | undefined;
 }
 
 export type ReturnStatement = ExpressionBase & {
 	type: typeof Expression_Return;
-	expr: Expression | undefined;
+	expr: Expression;
 }
 
 export type ReturnStatementBlock = ExpressionBase & {
@@ -685,15 +686,12 @@ export function parseReturnStatementInternal(parser: Parser): ReturnStatement | 
 	const pos = parserPos(parser);
 
 	const expr = parseExpression(parser);
-	if (expr) {
-		parseWhitespace(parser);
+	if (!expr) {
+		// TODO: error here
+		return undefined
 	}
 
-	if (currentChar(parser) !== ")") {
-		// TODO: error reporting
-		return undefined;
-	}
-	advance(parser);
+	parseWhitespace(parser);
 
 	return {
 		type: Expression_Return,
@@ -719,14 +717,13 @@ export function parseReturnStatementBlockInternal(parser: Parser): ReturnStateme
 
 export function parseAnyReturnStatement(parser: Parser): ReturnStatement | ReturnStatementBlock | undefined {
 	if (!compareAndAdvance(parser, "return")) return undefined;
+
 	parseWhitespace(parser);
-	if (compareAndAdvance(parser, "(")) {
-		return parseReturnStatementInternal(parser);
-	}
 	if (compareAndAdvance(parser, "{")) {
 		return parseReturnStatementBlockInternal(parser);
 	}
-	return undefined;
+
+	return parseReturnStatementInternal(parser);
 }
 
 export function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, op: BinaryOperator | undefined): BinaryExpression | undefined {
@@ -811,19 +808,41 @@ export function parseExpression(parser: Parser): Expression | undefined {
 }
 
 export function parseIndexerExpression(parser: Parser, expr: Expression): Expression | undefined {
-	const pos = parserPos(parser);
-
+	// Parses the full chain of indexers. x[0, 0][0][2][2][1]
 	while (true) {
-		if (!compareAndAdvance(parser, "[")) return expr;
-		parseWhitespace(parser);
-
-		const indexExpr = parseExpression(parser);
-		if (!indexExpr) {
-			// TODO: error - expected expression here
-			return undefined;
+		if (!compareAndAdvance(parser, "[")) {
+			break;
 		}
-		parseWhitespace(parser);
-		if (!compareAndAdvance(parser, "]")) {
+
+		const indexExprs: Expression[] = [];
+		let foundEnd = false;
+
+		// Only matrices need multiple indexers at once - and they only need 2 max
+		for (let i = 0; i < 2; i++) {
+			parseWhitespace(parser);
+			const indexExpr = parseExpression(parser);
+			if (!indexExpr) {
+				// TODO: error - expected expression here
+				return undefined;
+			}
+
+			indexExprs.push(indexExpr);
+
+			parseWhitespace(parser);
+			if (compareAndAdvance(parser, ",")) {
+				continue;
+			}
+
+			if (!compareAndAdvance(parser, "]")) {
+				// TODO: error - expected closing bracket here
+				return undefined;
+			}
+
+			foundEnd = true;
+			break
+		}
+
+		if (!foundEnd) {
 			// TODO: error - expected closing bracket here
 			return undefined;
 		}
@@ -831,13 +850,15 @@ export function parseIndexerExpression(parser: Parser, expr: Expression): Expres
 		parseWhitespace(parser);
 
 		expr = {
-			type:   Expression_Indexer,
-			start:  pos,
-			end:    parserPos(parser),
-			index:  indexExpr,
-			target: expr
+			type:    Expression_Indexer,
+			start:   expr.start,
+			end:     parserPos(parser),
+			indexes: indexExprs,
+			target:  expr
 		};
 	}
+
+	return expr;
 }
 
 export function getOpLevel(op: BinaryOperatorType): number {
@@ -1233,6 +1254,9 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 
 	if (!compareAndAdvance(parser, "fn")) return;
 	parseWhitespace(parser);
+
+	const nameIdent = parseIdentifier(parser);
+
 	if (!compareAndAdvance(parser, "(")) return;
 	parseWhitespace(parser);
 
@@ -1280,11 +1304,12 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 	}
 
 	return {
-		type: Expression_FunctionDefinition,
+		type:  Expression_FunctionDefinition,
 		start: pos,
-		end: parserPos(parser),
-		args: args,
-		body: body,
+		end:   parserPos(parser),
+		name:  nameIdent,
+		args:  args,
+		body:  body,
 	};
 }
 

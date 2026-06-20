@@ -85,7 +85,7 @@ export function testFailure(r: TestResult, message: string) {
 	r.fails.push(message);
 }
 
-export function addTest(name: string, fn: ((r: TestResult) => void), isDebugging: boolean = false) {
+export function addTest(name: string, fn: ((r: TestResult) => void)) {
 	const g = groups[groups.length - 1];
 
 	if (!g.tests) {
@@ -98,7 +98,9 @@ export function addTest(name: string, fn: ((r: TestResult) => void), isDebugging
 		checks: 0,
 		time: 0,
 		fn,
-		isDebugging,
+		// easier to grep than a boolean flag, and
+		// it works well with table-driven testing too since I can add [debug] to the name directly.
+		isDebugging: name.startsWith("[debug]"), 
 	};
 
 	g.tests.push(test);
@@ -226,6 +228,9 @@ function runAllTestsInternal(groups: TestGroup[], debugOnly: boolean) {
 					continue;
 				}
 
+				// useful for finding infinite loops, not much else.
+				// console.log("Running test ", test.name)
+
 				const t0 = performance.now();
 				try {
 					test.fn(test);
@@ -233,6 +238,10 @@ function runAllTestsInternal(groups: TestGroup[], debugOnly: boolean) {
 					testFailure(test, "Runtime error: " + e);
 				}
 				test.time = performance.now() - t0;
+
+				if (test.checks === 0) {
+					testFailure(test, "This test didn't test anything");
+				}
 			}
 		}
 
@@ -344,7 +353,7 @@ export function printResults(results: TestContext) {
 	} else if (mode === MODE_FAILING) {
 		console.log("Some tests are failing:");
 	} else if (mode === MODE_FAILING_SUMMARY) {
-		console.log(`A LOT of tests are failing (${numFails}) - islotate a test for debug with addTest(..., true <-):`);
+		console.log(`A LOT of tests are failing (${numFails}) - islotate a test by naming it "[debug] ..."`);
 	} else if (mode === MODE_ALL_PASSING) {
 		console.log("All passing");
 	}

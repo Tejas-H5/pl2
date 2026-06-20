@@ -1,13 +1,28 @@
-import { addTest, addTestGroup, setCurrentTestFile, testAssert, testDeepEqual, testEqual, TestResult } from "src/testing/testing";
+import { test, testFailure, addTest, addTestGroup, setCurrentTestFile, testAssert, testDeepEqual, testEqual, TestResult } from "src/testing/testing";
 import * as pl2 from "./interpreter";
 import { assertNever } from "./assert";
+import { expressionToString } from "./ast";
 
 setCurrentTestFile("src/pl2/interpreter.test.ts", pl2.interpretProgram);
 
+export function testNoErrors(r: TestResult, p: pl2.ProgramIterator) {
+	if (!testEqual(r, p.lastResult.error?.message, undefined)) {
+		testFailure(r, "'" + expressionToString(p.program.code, p.lastResult.error!.expr) + "'");
+	}
+}
+
 function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, message = "") {
+	if (!test(r, got.type === wanted.type)) {
+		testFailure(r, "\nGot   : " + pl2.resultTypeToString(got.type)    + "|" + pl2.resultToString(got) + 
+			           "\nWanted: " + pl2.resultTypeToString(wanted.type) + "|" + pl2.resultToString(wanted));
+	}
 	switch(wanted.type) {
 		case pl2.Result_Nothing: {
 			testAssert(r, got.type === wanted.type);
+		} break;
+		case pl2.Result_BuiltinFunction: {
+			testAssert(r, got.type === wanted.type);
+			testEqual(r, got.val, wanted.val);
 		} break;
 		case pl2.Result_Number: {
 			testAssert(r, got.type === wanted.type);
@@ -45,9 +60,9 @@ function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, mes
 		} break;
 		case pl2.Result_Matrix: {
 			testAssert(r, got.type === wanted.type);
-			if (testEqual(r, got.rows, wanted.rows, "rows not equal")) {
-				if (testEqual(r, got.cols, wanted.cols, "cols not equal")) {
-					testDeepEqual(r, got.val.length, wanted.val.length);
+			if (testEqual(r, got.val.rows, wanted.val.rows, "rows not equal")) {
+				if (testEqual(r, got.val.cols, wanted.val.cols, "cols not equal")) {
+					testDeepEqual(r, got.val.data, wanted.val.data);
 				}
 			}
 		} break;
@@ -70,7 +85,10 @@ addTestGroup("Binary operations", [], () => {
 		addTest("Normal assigning", r => {
 			const result = pl2.interpretCode("x = 1");
 
+			testNoErrors(r, result);
+
 			const [x, err] = pl2.evaluateCode("x", result);
+
 			testEqual(r, err, undefined);
 			testEqualResult(r, x, { type: pl2.Result_Number, val: 1 });
 		});
@@ -124,27 +142,27 @@ addTestGroup("Binary operations", [], () => {
 
 		addTestGroup("Comparisons", [], () => {
 			const tests = [
-				{ sample: "x = 1 < 2", expected: pl2.newBoolean(true) },
-				{ sample: "x = 2 < 2", expected: pl2.newBoolean(false) },
+				{ name: "test 0", sample: "x = 1 < 2", expected: pl2.newBoolean(true) },
+				{ name: "test 1", sample: "x = 2 < 2", expected: pl2.newBoolean(false) },
 
-				{ sample: "x = 1 <= 2", expected: pl2.newBoolean(true) },
-				{ sample: "x = 2 <= 2", expected: pl2.newBoolean(true) },
-				{ sample: "x = 3 <= 2", expected: pl2.newBoolean(false) },
+				{ name: "test 2", sample: "x = 1 <= 2", expected: pl2.newBoolean(true) },
+				{ name: "test 3", sample: "x = 2 <= 2", expected: pl2.newBoolean(true) },
+				{ name: "test 4", sample: "x = 3 <= 2", expected: pl2.newBoolean(false) },
 
-				{ sample: "x = 3 > 2", expected: pl2.newBoolean(true) },
-				{ sample: "x = 2 > 2", expected: pl2.newBoolean(false) },
+				{ name: "test 5", sample: "x = 3 > 2", expected: pl2.newBoolean(true) },
+				{ name: "test 6", sample: "x = 2 > 2", expected: pl2.newBoolean(false) },
 
-				{ sample: "x = 3 >= 2", expected: pl2.newBoolean(true) },
-				{ sample: "x = 2 >= 2", expected: pl2.newBoolean(true) },
-				{ sample: "x = 1 >= 2", expected: pl2.newBoolean(false) },
+				{ name: "test 7", sample: "x = 3 >= 2", expected: pl2.newBoolean(true) },
+				{ name: "test 8", sample: "x = 2 >= 2", expected: pl2.newBoolean(true) },
+				{ name: "test 9", sample: "x = 1 >= 2", expected: pl2.newBoolean(false) },
 
-				{ sample: "x = 15 % 3 == 0", expected: pl2.newBoolean(true) },
-				{ sample: "x = 15 % 5 == 0", expected: pl2.newBoolean(true) },
-				{ sample: "x = 15 % 5 == 0 && 15 % 3 == 0", expected: pl2.newBoolean(true) },
+				{ name: "test 10", sample: "x = 15 % 3 == 0", expected: pl2.newBoolean(true) },
+				{ name: "test 11", sample: "x = 15 % 5 == 0", expected: pl2.newBoolean(true) },
+				{ name: "test 12", sample: "x = 15 % 5 == 0 && 15 % 3 == 0", expected: pl2.newBoolean(true) },
 			];
 
 			for (const test of tests) {
-				addTest("Normal cases - " + test.sample, r => {
+				addTest(test.name, r => {
 					const result = pl2.interpretCode(test.sample);
 					const [x, err] = pl2.evaluateCode("x", result);
 					testEqual(r, err, undefined);
@@ -188,7 +206,7 @@ addTestGroup("Binary operations", [], () => {
 				testEqualResult(r, x, pl2.newNumber(0));
 			});
 
-			addTest("Shouldn't be able to access variables through function scopes", r => {
+			addTest("Should NOT be able to access variables through function scopes - they are non-capturing", r => {
 				const result = pl2.interpretCode(`
 					i = 0
 					do_thing = fn() {
@@ -205,6 +223,7 @@ addTestGroup("Binary operations", [], () => {
 					x = 0
 					y = return{
 						x = 1
+						return nothing
 					}
 				`);
 
@@ -222,6 +241,23 @@ addTestGroup("Binary operations", [], () => {
 
 				const [x, err] = pl2.evaluateCode("x", result);
 				testEqual(r, err, "Variable not found: x");
+			});
+
+			addTest("Global vars should be accessible from all scopes", r => {
+				const result = pl2.interpretCode(`
+					fn b() {
+						a()
+					}
+
+					a = fn() {
+						print("hi")
+					}
+
+					b();
+				`);
+
+				testEqual(r, result.lastResult.error, undefined);
+				testEqualLogs(r, result, [ "hi" ]);
 			});
 		});
 	})
@@ -291,22 +327,22 @@ addTestGroup("Binary operations", [], () => {
 				const [result, err] = pl2.evaluateCode(test.code, ctx);
 				testEqual(r, err, undefined);
 				testEqualResult(r, result, test.expected);
-			}, test.debug);
+			});
 		}
 	});
 
 	addTestGroup("Matrix elementwise ops", [], () => {
 		const tests: { code: string; expected: pl2.Result }[] = [
-			{ code: `mat<1, 3>{1, 2, 3}   +  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [4,  4, 4] } },
-			{ code: `mat<1, 3>{1, 2, 3}   -  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [-2, 0, 2] } },
-			{ code: `mat<1, 3>{1, 2, 3}   *  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [3,  4, 3] } },
-			{ code: `mat<1, 3>{5, 10, 15} /  mat<1, 3>{5, 5, 5}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 2, 3] } },
-			{ code: `mat<1, 3>{1,2,3}     == mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 0, 0] } },
-			{ code: `mat<1, 3>{1,2,3}     != mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [0, 1, 1] } },
-			{ code: `mat<1, 3>{1,2,3}     <  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [0, 1, 0] } },
-			{ code: `mat<1, 3>{1,2,3}     <= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 1, 0] } },
-			{ code: `mat<1, 3>{1,2,3}     >  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [0, 0, 1] } },
-			{ code: `mat<1, 3>{1,2,3}     >= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, rows: 1, cols: 3, val: [1, 0, 1] } },
+			{ code: `mat<1, 3>{1, 2, 3}   +  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [4,  4, 4] } } },
+			{ code: `mat<1, 3>{1, 2, 3}   -  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [-2, 0, 2] } } },
+			{ code: `mat<1, 3>{1, 2, 3}   *  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [3,  4, 3] } } },
+			{ code: `mat<1, 3>{5, 10, 15} /  mat<1, 3>{5, 5, 5}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 2, 3] } } },
+			{ code: `mat<1, 3>{1,2,3}     == mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 0, 0] } } },
+			{ code: `mat<1, 3>{1,2,3}     != mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 1, 1] } } },
+			{ code: `mat<1, 3>{1,2,3}     <  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 1, 0] } } },
+			{ code: `mat<1, 3>{1,2,3}     <= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 1, 0] } } },
+			{ code: `mat<1, 3>{1,2,3}     >  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 0, 1] } } },
+			{ code: `mat<1, 3>{1,2,3}     >= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 0, 1] } } },
 		];
 
 		for (const test of tests) {
@@ -320,13 +356,13 @@ addTestGroup("Binary operations", [], () => {
 	});
 
 	addTestGroup("Matrix ops ops", [], () => {
-		const tests: { code: string; expected: pl2.Result }[] = [
-			{ code: `mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2.Result_Vector, val: [3, 7] } },
-			{ code: `transpose(mat<2, 2>{1, 2, 3, 4})`, expected: { type: pl2.Result_Matrix, rows: 2, cols: 2, val: [1, 2, 3, 4] } },
+		const tests: { prefix: string; code: string; expected: pl2.Result }[] = [
+			{ prefix: "", code: `mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2.Result_Vector, val: [3, 7] } },
+			{ prefix: "", code: `transpose(mat<2, 2>{1, 2, 3, 4})`, expected: { type: pl2.Result_Matrix, val: { rows: 2, cols: 2, data: [1, 3, 2, 4] } } },
 		];
 
 		for (const test of tests) {
-			addTest(test.code, r => {
+			addTest(test.prefix + test.code, r => {
 				const ctx = pl2.interpretCode("")
 				const [result, err] = pl2.evaluateCode(test.code, ctx);
 				testEqual(r, err, undefined);
@@ -540,22 +576,10 @@ addTestGroup("For-Loops", [], () => {
 	for (const test of tests) {
 		addTest(test.name, r => {
 			const result = pl2.interpretCode(test.code);
-			testEqualLogs(r, result, test.expected);;
+			testEqual(r, result.lastResult.error, undefined);
+			testEqualLogs(r, result, test.expected);
 		})
 	}
-});
-
-addTestGroup("Data structures", [], () => {
-	addTestGroup("Lists", [], () => {
-		addTest("Basic ops", r => {
-			const result = pl2.interpretCode(`
-				x := list{0, 1, 2}
-				for i in 0..<len(x) {
-					print(i, x[i]);
-				}
-			`);
-		});
-	});
 });
 
 addTestGroup("More complicated programs", [], () => {
@@ -599,6 +623,7 @@ addTestGroup("More complicated programs", [], () => {
 				}
 			`);
 
+			testEqual(r, result.lastResult.error, undefined);
 			testEqualLogs(r, result, [
 				"3 fizz",
 				"5 buzz",
@@ -637,6 +662,53 @@ addTestGroup("More complicated programs", [], () => {
 				"15 fizzbuzz",
 			]);
 		});
+	});
+});
+
+
+addTestGroup("Returning", [], () => {
+	addTest("Return statement", r => {
+		const result = pl2.interpretCode(`
+			return_a_value = fn() {
+				return(1)
+				return(2)
+				return(3)
+			}
+		`)
+
+		const [val, err] = pl2.evaluateCode("return_a_value()", result);
+		testEqual(r, err, undefined);
+		testEqualResult(r, val, pl2.newNumber(1));
+	});
+
+	addTest("Return block", r => {
+		const result = pl2.interpretCode(`
+			return_a_value = fn() {
+				return{
+					return(1)
+					return(2)
+					return(3)
+				}
+			}
+		`)
+
+		const [val, err] = pl2.evaluateCode("return_a_value()", result);
+		testEqual(r, err, undefined);
+		testEqualResult(r, val, pl2.newNumber(1));
+	});
+
+	addTest("Raw return shouldn't work", r => {
+		const result = pl2.interpretCode(`
+			fn return_a_value() {
+				1
+				2
+				return(3)
+			}
+		`)
+
+		const [val, err] = pl2.evaluateCode("return_a_value()", result);
+		testEqual(r, err, undefined);
+		testEqualResult(r, val, pl2.newNumber(3));
 	});
 });
 
@@ -681,7 +753,7 @@ addTestGroup("Indexing", [], () => {
 	});
 
 	addTestGroup("map", [], () => {
-		addTest("Normal map", r => {
+		addTest("Create a map", r => {
 			const result = pl2.interpretCode(`
 				x = map{
 					1 = 12,
@@ -698,6 +770,23 @@ addTestGroup("Indexing", [], () => {
 				"2 25",
 				"4 12",
 			]);
+		});
+
+		addTest("Insert into  map", r => {
+			const result = pl2.interpretCode(`
+				x = map{}
+				x[1] = 1
+			`);
+
+			testEqual(r, result.lastResult.error, undefined);
+
+			// const [x1, err1] = pl2.evaluateCode(`x[1]`, result)
+			// testEqual(r, err1, undefined);
+			// testEqualResult(r, x1, pl2.newNumber(1));
+
+			const [x2, err2] = pl2.evaluateCode(`x[2]`, result)
+			testEqual(r, err2, undefined);
+			testEqualResult(r, x2, pl2.NOTHING)
 		});
 	});
 
@@ -751,5 +840,144 @@ addTestGroup("Indexing", [], () => {
 ]`,
 			]);
 		});
+	});
+});
+
+addTestGroup("Control flow", [], () => {
+	addTest("return top level", r => {
+		const result = pl2.interpretCode(`
+			print(1)
+			return nothing
+			print(2)
+			print(3)
+		`);
+		testEqualLogs(r, result, ["1"]);
+	});
+
+	addTest("return in a function", r => {
+		const result = pl2.interpretCode(`
+			fn test() {
+				print(1)
+				return nothing
+				print(2)
+				print(3)
+			}
+			test()
+		`);
+		testEqualLogs(r, result, ["1"]);
+	});
+
+	addTest("return in a function should not return outer function", r => {
+		const result = pl2.interpretCode(`
+			fn test() {
+				print(1)
+				return nothing
+				print(2)
+				print(3)
+			}
+			fn test2() {
+				test()
+				print(4)
+			}
+			test2()
+		`);
+		testEqualLogs(r, result, ["1", "4"]);
+	});
+
+
+	addTest("return in an if-statement", r => {
+		const result = pl2.interpretCode(`
+			fn test() {
+				if true {
+					print(1)
+					return nothing
+					print(2)
+					print(3)
+				}
+				print(5)
+			}
+			test()
+			print(6)
+		`);
+		testEqualLogs(r, result, ["1", "6"]);
+	});
+
+	addTest("return in an if-statement in a for loop", r => {
+		const result = pl2.interpretCode(`
+			fn test() {
+				if true {
+					for i in 0..<10 {
+						print(1)
+						return nothing
+						print(2)
+						print(3)
+					}
+					print(5)
+				}
+				print(5)
+			}
+			test()
+		`);
+		testEqualLogs(r, result, ["1"]);
+	});
+
+	addTest("return in an if-statement in a for loop in a return block", r => {
+		const result = pl2.interpretCode(`
+			fn test() {
+				if true {
+					for i in 0..<10 {
+						return {
+							print(1)
+							return nothing
+							print(2)
+							print(3)
+						}
+						print(4)
+					}
+					print(5)
+				}
+				print(5)
+			}
+			test()
+		`);
+		testEqualLogs(r, result, ["1"]);
+	});
+
+	addTest("return in an for loop in a for loop in a return block", r => {
+		const result = pl2.interpretCode(`
+			fn test() {
+				for i in 0..<10 {
+					for i in 0..<10 {
+						print(1)
+						return nothing
+						print(2)
+						print(3)
+					}
+					print(4)
+				}
+				print(5)
+			}
+			test()
+		`);
+		testEqualLogs(r, result, ["1"]);
+	});
+
+	addTest("return in an if in an if in a return block", r => {
+		const result = pl2.interpretCode(`
+			fn test() {
+				if true {
+					if true {
+						print(1)
+						return nothing
+						print(2)
+						print(3)
+					}
+					print(4)
+				}
+				print(5)
+			}
+			test()
+		`);
+		testEqualLogs(r, result, ["1"]);
 	});
 });

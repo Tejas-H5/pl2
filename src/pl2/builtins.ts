@@ -1,14 +1,9 @@
+import { FunctionCall } from "./ast";
 import {
-	FunctionCall
-} from "./ast";
-import {
-    RETURN_ERR,
+    RETURN_ERROR,
 	evaluateExpression,
 	evaluateExpressionValue,
-	ExprNoReturn,
 	ExprReturn,
-	ExprValueReturn,
-	newSlot,
 	RETURN_NONE,
 	ProgramIterator,
 	Result_Number,
@@ -16,60 +11,29 @@ import {
 	resultToString,
     setError,
     setResultNumber,
-    Slot,
     Result_String,
     Result_List,
     Result_Map,
     resultTypeToString,
     Result_Matrix,
     Result,
-    matrixGetIdx,
+    matrixGetIndex,
     setResult,
-    Result_Vector
+    Result_Vector,
 } from "./interpreter";
 
-export type BuiltinFn = (fn: FunctionCall, iter: ProgramIterator, dst: Slot) => ExprReturn;
-
-export function getBuiltinFn(name: string): BuiltinFn | undefined {
-	switch (name) {
-		case "print":      return print;
-		case "len":        return len;
-		case "math_max":   return math_max;
-		case "math_min":   return math_min;
-		case "math_clamp": return math_clamp;
-		case "math_sin":   return math_sin;
-		case "math_cos":   return math_cos;
-		case "math_tan":   return math_tan;
-		case "math_asin":  return math_asin;
-		case "math_acos":  return math_acos;
-		case "math_atan":  return math_atan;
-		case "math_atan2": return math_atan2;
-		case "math_log2":  return math_log2;
-		case "math_ln":    return math_ln;
-		case "math_pow":   return math_pow;
-		case "math_sqrt":  return math_sqrt;
-		case "mul":        return mul;
-		case "transpose":  return transpose;
-
-		// TODO: drawing
-	}
-
-	return undefined;
-}
-
-export function print(fn: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
+export function print(fn: FunctionCall, iter: ProgramIterator): ExprReturn {
 	const sb: string[] = [];
 	for (let i = 0; i < fn.arguments.length; i++) {
 		const expr = fn.arguments[i];
 
-		const dst = newSlot();
-		evaluateExpression(expr, iter, dst);
+		evaluateExpression(expr, iter);
 
 		let message;
-		if (dst.error) {
-			message = dst.error;
+		if (iter.lastResult.error) {
+			message = iter.lastResult.error.message;
 		} else {
-			message = resultToString(dst.result);
+			message = resultToString(iter.lastResult.result);
 		}
 
 		sb.push(message);
@@ -79,252 +43,282 @@ export function print(fn: FunctionCall, iter: ProgramIterator, dst: Slot): ExprR
 	return RETURN_NONE;
 }
 
-function evaluateArgumentNumber(call: FunctionCall, i: number, iter: ProgramIterator, dst: Slot): ExprValueReturn {
-	const rt = evaluateExpressionValue(call.arguments[i], iter, dst);
-	if (rt === RETURN_ERR) return RETURN_ERR;
-	if (dst.result.type !== Result_Number) return setError(dst, `Argument ${i} was not a number`);
-	return rt;
+function evaluateArgumentNumber(call: FunctionCall, i: number, iter: ProgramIterator): ResultNumber | undefined {
+	const result = evaluateExpressionValue(call.arguments[i], iter);
+	if (!result)                       return undefined;
+	if (result.type !== Result_Number) {
+		setError(iter, call, `Argument ${i} was not a number`); 
+		return;
+	}
+
+	return result;
 }
 
-export function math_max(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprValueReturn {
+export function math_max(call: FunctionCall, iter: ProgramIterator): ExprReturn {
 	let max = -Infinity;
 	for (let i = 0; i < call.arguments.length; i++) {
-		if (evaluateArgumentNumber(call, i, iter, dst) === RETURN_ERR) return RETURN_ERR;
-		if ((dst.result as ResultNumber).val > max) max = (dst.result as ResultNumber).val;
+		const iArg = evaluateArgumentNumber(call, i, iter);
+		if (!iArg) return RETURN_ERROR;
+		if (iArg.val > max) max = iArg.val;
 	}
-	return setResultNumber(dst, max);
+	return setResultNumber(iter, max);
 }
 
 
-export function math_min(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprValueReturn {
+export function math_min(call: FunctionCall, iter: ProgramIterator): ExprReturn {
 	let min = Infinity;
 	for (let i = 0; i < call.arguments.length; i++) {
-		if (evaluateArgumentNumber(call, i, iter, dst) === RETURN_ERR) return RETURN_ERR;
-		if ((dst.result as ResultNumber).val < min) min = (dst.result as ResultNumber).val;
+		const iArg = evaluateArgumentNumber(call, i, iter);
+		if (!iArg) return RETURN_ERROR;
+		if (iArg.val < min) min = iArg.val;
 	}
-	return setResultNumber(dst, min);
+	return setResultNumber(iter, min);
 }
 
-function checkNumArgs(call: FunctionCall, fnName: string, numArgs: number, dst: Slot): ExprNoReturn | undefined {
-	if (call.arguments.length !== numArgs) return setError(dst, fnName + ` requires ${numArgs} arguments`);
+function checkNumArgs(call: FunctionCall, fnName: string, numArgs: number, iter: ProgramIterator): ExprReturn | undefined {
+	if (call.arguments.length !== numArgs) return setError(iter, call, fnName + ` requires ${numArgs} arguments`);
 	return undefined;
 }
 
-export function math_clamp(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_clamp", 3, dst))   return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
+export function math_clamp(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_clamp", 3, iter)) return RETURN_ERROR;
 
-	const minDst = iter.temp1;
-	if (evaluateArgumentNumber(call, 1, iter, minDst) === RETURN_ERR) return setError(dst, minDst.error);
+	const val = evaluateArgumentNumber(call, 0, iter);
+	if (!val) return RETURN_ERROR;
 
-	const maxDst = iter.temp2;
-	if (evaluateArgumentNumber(call, 2, iter, maxDst) === RETURN_ERR) return setError(dst, maxDst.error);
+	const min = evaluateArgumentNumber(call, 1, iter);
+	if (!min) return RETURN_ERROR;
 
-	let clamped = (dst.result as ResultNumber).val;
-	if (clamped < (minDst.result as ResultNumber).val) clamped = (minDst.result as ResultNumber).val;
-	if (clamped > (maxDst.result as ResultNumber).val) clamped = (maxDst.result as ResultNumber).val;
+	const max = evaluateArgumentNumber(call, 2, iter);
+	if (!max) return RETURN_ERROR;
 
-	return setResultNumber(dst, clamped);
+	let clamped = val.val;
+	if (clamped < min.val) clamped = min.val;
+	if (clamped > max.val) clamped = max.val;
+
+	return setResultNumber(iter, clamped);
 }
 
-export function math_sin(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_sin", 1, dst))     return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.sin((dst.result as ResultNumber).val))
+export function math_sin(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_sin", 1, iter))                      return RETURN_ERROR;
+	const rad = evaluateArgumentNumber(call, 0, iter);
+	if (!rad) return RETURN_ERROR;
+	return setResultNumber(iter, Math.sin(rad.val))
 }
 
-export function math_cos(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_cos", 1, dst))     return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.cos((dst.result as ResultNumber).val))
+export function math_cos(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_cos", 1, iter))                      return RETURN_ERROR;
+	const rad = evaluateArgumentNumber(call, 0, iter);
+	if (!rad) return RETURN_ERROR;
+	return setResultNumber(iter, Math.cos(rad.val))
 }
 
-export function math_tan(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_tan", 1, dst))                    return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.tan((dst.result as ResultNumber).val))
+export function math_tan(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_tan", 1, iter))                      return RETURN_ERROR;
+	const rad = evaluateArgumentNumber(call, 0, iter);
+	if (!rad) return RETURN_ERROR;
+	return setResultNumber(iter, Math.tan(rad.val))
 }
 
-export function math_asin(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_asin", 1, dst))                    return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.asin((dst.result as ResultNumber).val))
+export function math_asin(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_asin", 1, iter))                     return RETURN_ERROR;
+	const rad = evaluateArgumentNumber(call, 0, iter);
+	if (!rad) return RETURN_ERROR;
+	return setResultNumber(iter, Math.asin(rad.val))
 }
 
-export function math_acos(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_acos", 1, dst))                    return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.acos((dst.result as ResultNumber).val))
+export function math_acos(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_acos", 1, iter))                     return RETURN_ERROR;
+	const rad = evaluateArgumentNumber(call, 0, iter);
+	if (!rad) return RETURN_ERROR;
+	return setResultNumber(iter, Math.acos(rad.val))
 }
 
-export function math_atan(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_atan", 1, dst))                    return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.atan((dst.result as ResultNumber).val))
+export function math_atan(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_atan", 1, iter))                    return RETURN_ERROR;
+	const rad = evaluateArgumentNumber(call, 0, iter);
+	if (!rad) return RETURN_ERROR;
+	return setResultNumber(iter, Math.atan(rad.val))
 }
 
-export function math_atan2(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_atan2", 2, dst))                  return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
-	if (evaluateArgumentNumber(call, 1, iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
-	return setResultNumber(dst, Math.atan2((iter.temp1.result as ResultNumber).val, (iter.temp2.result as ResultNumber).val))
+export function math_atan2(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_atan2", 2, iter))                    return RETURN_ERROR;
+
+	const y = evaluateArgumentNumber(call, 0, iter);
+	if (!y) return RETURN_ERROR;
+
+	const x = evaluateArgumentNumber(call, 1, iter);
+	if (!x) return RETURN_ERROR;
+
+	return setResultNumber(iter, Math.atan2(y.val, x.val))
 }
 
-export function math_log2(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_log2", 1, dst))                    return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.log2((dst.result as ResultNumber).val));
+export function math_log2(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_log2", 1, iter))                    return RETURN_ERROR;
+	const x = evaluateArgumentNumber(call, 0, iter);
+	if (!x) return RETURN_ERROR;
+	return setResultNumber(iter, Math.log2(x.val));
 }
 
-export function math_ln(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_ln", 1, dst))                    return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.log((dst.result as ResultNumber).val));
+export function math_ln(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_ln", 1, iter))                    return RETURN_ERROR;
+	const x = evaluateArgumentNumber(call, 0, iter);
+	if (!x) return RETURN_ERROR;
+	return setResultNumber(iter, Math.log(x.val));
 }
 
-export function math_pow(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_pow", 2, dst))                           return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
-	if (evaluateArgumentNumber(call, 1, iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
-	return setResultNumber(dst, Math.pow((iter.temp1.result as ResultNumber).val, (iter.temp2.result as ResultNumber).val));
+export function math_pow(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_pow", 2, iter)) return RETURN_ERROR;
+	const val = evaluateArgumentNumber(call, 0, iter)
+	if (!val) return RETURN_ERROR;
+
+	const power = evaluateArgumentNumber(call, 1, iter)
+	if (!power) return RETURN_ERROR;
+
+	return setResultNumber(iter, Math.pow(val.val, power.val));
 }
 
-export function math_sqrt(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "math_sqrt", 1, dst))                   return RETURN_ERR;
-	if (evaluateArgumentNumber(call, 0, iter, dst) === RETURN_ERR) return RETURN_ERR;
-	return setResultNumber(dst, Math.sqrt((dst.result as ResultNumber).val));
+export function math_sqrt(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "math_sqrt", 1, iter))                   return RETURN_ERROR;
+	const val = evaluateArgumentNumber(call, 0, iter)
+	if (!val) return RETURN_ERROR;
+	return setResultNumber(iter, Math.sqrt(val.val));
 }
 
-export function mul(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "mul", 2, dst)) return RETURN_ERR;
-	if (evaluateExpressionValue(call.arguments[0], iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
-	if (evaluateExpressionValue(call.arguments[1], iter, iter.temp2) === RETURN_ERR) return setError(dst, iter.temp2.error);
+export function mul(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "mul", 2, iter)) return RETURN_ERROR;
 
-	const a1 = iter.temp1.result;
-	const a2 = iter.temp2.result;
+	const a0 = evaluateExpressionValue(call.arguments[0], iter);
+	if (!a0) return RETURN_ERROR;
 
-	if (a1.type === Result_Matrix && a2.type === Result_Vector) {
-		if (a1.cols !== a2.val.length) return setError(dst, "m1.cols !== vec.length");
+	const a1 = evaluateExpressionValue(call.arguments[1], iter);
+	if (!a1) return RETURN_ERROR;
+
+	if (a0.type === Result_Matrix && a1.type === Result_Vector) {
+		if (a0.val.cols !== a1.val.length) return setError(iter, call, "m1.cols !== vec.length");
 
 		const result: Result = {
 			type: Result_Vector,
-			val: Array(a1.cols).fill(0),
+			val:  Array(a0.val.cols).fill(0),
 		};
 
-		for (let a1Row = 0; a1Row < a1.rows; a1Row++) {
+		for (let a1Row = 0; a1Row < a0.val.rows; a1Row++) {
 			let sum = 0;
-			for (let k = 0; k < a1.cols; k++) {
-				const a1Idx = matrixGetIdx(a1, a1Row, k);
-				sum += a1.val[a1Idx] * a2.val[k];
+			for (let k = 0; k < a0.val.cols; k++) {
+				const a1Idx = matrixGetIndex(a0.val, a1Row, k);
+				sum += a0.val.data[a1Idx] * a1.val[k];
 			}
 			result.val[a1Row] = sum;
 		}
 
-		return setResult(dst, result);
+		return setResult(iter, result);
 	}
 
-	if (a1.type === Result_Matrix && a2.type === Result_Matrix) {
-		if (a1.cols !== a2.rows) return setError(dst, "m1.cols !== m2.rows");
+	if (a0.type === Result_Matrix && a1.type === Result_Matrix) {
+		if (a0.val.cols !== a1.val.rows) return setError(iter, call, "m1.cols !== m2.rows");
 
 		const result: Result = {
 			type: Result_Matrix,
-			rows: a1.rows,
-			cols: a2.cols,
-			val: Array(a1.cols * a2.rows).fill(0),
+			val: {
+				rows: a0.val.rows,
+				cols: a1.val.cols,
+				data: Array(a0.val.cols * a1.val.rows).fill(0),
+			}
 		};
 
-		for (let a1Row = 0; a1Row < a1.rows; a1Row++) {
-			for (let a2Col = 0; a2Col < a2.cols; a2Col++) {
+		for (let a1Row = 0; a1Row < a0.val.rows; a1Row++) {
+			for (let a2Col = 0; a2Col < a1.val.cols; a2Col++) {
 				let sum = 0;
-				for (let k = 0; k < a1.cols; k++) {
-					const a1Idx = matrixGetIdx(a1, a1Row, k);
-					const a2Idx = matrixGetIdx(a2, k, a2Col);
-					sum += a1.val[a1Idx] * a2.val[a2Idx];
+				for (let k = 0; k < a0.val.cols; k++) {
+					const a1Idx = matrixGetIndex(a0.val, a1Row, k);
+					const a2Idx = matrixGetIndex(a1.val, k, a2Col);
+					sum += a0.val.data[a1Idx] * a1.val.data[a2Idx];
 				}
-				const resultIdx = matrixGetIdx(result, a1Row, a2Col);
-				result.val[resultIdx] = sum;
+				const resultIdx = matrixGetIndex(result.val, a1Row, a2Col);
+				result.val.data[resultIdx] = sum;
 			}
 		}
 
-		return setResult(dst, result);
+		return setResult(iter, result);
 	}
 
-	return setError(dst, "mul only handles Matrix x Matrix or Matrix x Vector");
+	return setError(iter, call, "mul only handles Matrix x Matrix or Matrix x Vector");
 }
 
-export function transpose(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn  {
-	if (checkNumArgs(call, "transpose", 1, dst)) return RETURN_ERR;
-	if (evaluateExpressionValue(call.arguments[0], iter, iter.temp1) === RETURN_ERR) return setError(dst, iter.temp1.error);
-
-	const m = iter.temp1.result;
-	if (m.type !== Result_Matrix) return RETURN_ERR;
+export function transpose(call: FunctionCall, iter: ProgramIterator): ExprReturn  {
+	if (checkNumArgs(call, "transpose", 1, iter)) return RETURN_ERROR;
+	const m = evaluateExpressionValue(call.arguments[0], iter);
+	if (!m)                       return RETURN_ERROR;
+	if (m.type !== Result_Matrix) return RETURN_ERROR;
 
 	const result: Result = {
 		type: Result_Matrix,
-		rows: m.cols,
-		cols: m.rows,
-		val: Array(m.rows * m.cols).fill(0),
+		val: {
+			rows: m.val.cols,
+			cols: m.val.rows,
+			data: Array(m.val.rows * m.val.cols).fill(0),
+		}
 	};
 
-	for (let row = 0; row < m.rows; row++) {
-		for (let col = 0; col < m.cols; col++) {
-			const srcIdx = matrixGetIdx(m, row, col);
-			const dstIdx = matrixGetIdx(result, col, row);
-			result.val[dstIdx] = m.val[srcIdx];
+	for (let row = 0; row < m.val.rows; row++) {
+		for (let col = 0; col < m.val.cols; col++) {
+			const srcIdx = matrixGetIndex(m.val, row, col);
+			const dstIdx = matrixGetIndex(result.val, col, row);
+			result.val.data[dstIdx] = m.val.data[srcIdx];
 		}
 	}
 
-	return setResult(dst, result);
+	return setResult(iter, result);
 }
 
-export function inverse(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn  {
-	if (checkNumArgs(call, "transpose", 1, dst)) return RETURN_ERR;
-	if (evaluateExpressionValue(call.arguments[0], iter, iter.temp1) === RETURN_ERR) {
-		return setError(dst, iter.temp1.error);
-	}
+export function inverse(call: FunctionCall, iter: ProgramIterator): ExprReturn  {
+	if (checkNumArgs(call, "transpose", 1, iter)) return RETURN_ERROR;
 
-	const mR = iter.temp1.result;
-	if (mR.type !== Result_Matrix) return setError(dst, "Need a matrix");
-	if (mR.rows !== mR.cols)        return setError(dst, "Only square matrices are invertible");
+	const mR = evaluateExpressionValue(call.arguments[0], iter);
+	if (!mR)                         return RETURN_ERROR;
+	if (mR.type !== Result_Matrix)   return setError(iter, call, "Need a matrix");
+	if (mR.val.rows !== mR.val.cols) return setError(iter, call, "Only square matrices are invertible");
 
 	const result: Result = {
 		type: Result_Matrix,
-		rows: mR.rows,
-		cols: mR.cols,
-		val: Array(mR.rows * mR.cols).fill(0),
+		val: {
+			rows: mR.val.rows,
+			cols: mR.val.cols,
+			data: Array(mR.val.rows * mR.val.cols).fill(0),
+		}
 	};
 
-	switch (mR.rows) {
+	switch (mR.val.rows) {
 		case 1: {
-			result.val[0] = 1 / result.val[0]
+			result.val.data[0] = 1 / result.val.data[0]
 		} break;
 		case 2: {
-			const aIdx = matrixGetIdx(result, 0, 0)
-			const bIdx = matrixGetIdx(result, 0, 1)
-			const cIdx = matrixGetIdx(result, 1, 0)
-			const dIdx = matrixGetIdx(result, 1, 1)
+			const aIdx = matrixGetIndex(result.val, 0, 0)
+			const bIdx = matrixGetIndex(result.val, 0, 1)
+			const cIdx = matrixGetIndex(result.val, 1, 0)
+			const dIdx = matrixGetIndex(result.val, 1, 1)
 
-			const a = mR.val[aIdx];
-			const b = mR.val[bIdx];
-			const c = mR.val[cIdx];
-			const d = mR.val[dIdx];
+			const a = mR.val.data[aIdx];
+			const b = mR.val.data[bIdx];
+			const c = mR.val.data[cIdx];
+			const d = mR.val.data[dIdx];
 
 			const det =  a * d - (b * c);
-			result.val[aIdx] = d / det;
-			result.val[bIdx] = -b / det;
-			result.val[cIdx] = -c / det;
-			result.val[dIdx] = a / det;
+			result.val.data[aIdx] = d / det;
+			result.val.data[bIdx] = -b / det;
+			result.val.data[cIdx] = -c / det;
+			result.val.data[dIdx] = a / det;
 		} break;
 		case 3: {
 			// TODO: learn abt how this works - ai wrote this
 
-			const aIdx = matrixGetIdx(result, 0, 0); const bIdx = matrixGetIdx(result, 0, 1); const cIdx = matrixGetIdx(result, 0, 2);
-			const dIdx = matrixGetIdx(result, 1, 0); const eIdx = matrixGetIdx(result, 1, 1); const fIdx = matrixGetIdx(result, 1, 2);
-			const gIdx = matrixGetIdx(result, 2, 0); const hIdx = matrixGetIdx(result, 2, 1); const iIdx = matrixGetIdx(result, 2, 2);
+			const aIdx = matrixGetIndex(result.val, 0, 0); const bIdx = matrixGetIndex(result.val, 0, 1); const cIdx = matrixGetIndex(result.val, 0, 2);
+			const dIdx = matrixGetIndex(result.val, 1, 0); const eIdx = matrixGetIndex(result.val, 1, 1); const fIdx = matrixGetIndex(result.val, 1, 2);
+			const gIdx = matrixGetIndex(result.val, 2, 0); const hIdx = matrixGetIndex(result.val, 2, 1); const iIdx = matrixGetIndex(result.val, 2, 2);
 
-			const a = result.val[aIdx]; const b = result.val[bIdx]; const c = result.val[cIdx];
-			const d = result.val[dIdx]; const e = result.val[eIdx]; const f = result.val[fIdx];
-			const g = result.val[gIdx]; const h = result.val[hIdx]; const i = result.val[iIdx];
+			const a = result.val.data[aIdx]; const b = result.val.data[bIdx]; const c = result.val.data[cIdx];
+			const d = result.val.data[dIdx]; const e = result.val.data[eIdx]; const f = result.val.data[fIdx];
+			const g = result.val.data[gIdx]; const h = result.val.data[hIdx]; const i = result.val.data[iIdx];
 
 			const A = (e * i - h * f);
 			const B = (f * g - d * i);
@@ -332,20 +326,20 @@ export function inverse(call: FunctionCall, iter: ProgramIterator, dst: Slot): E
 
 			const det = a * A + b * B + c * C;
 			if (Math.abs(det) < 0.00001) {
-				return setError(dst, "Matrix doesn't have an inverse");
+				return setError(iter, call.arguments[0], "Matrix doesn't have an inverse");
 			}
 
 			const invDet = 1.0 / det;
 
-			result.val[0] = A * invDet; result.val[1] = (c * h - b * i) * invDet; result.val[2] = (b * f - c * e) * invDet;
-			result.val[3] = B * invDet; result.val[4] = (a * i - c * g) * invDet; result.val[5] = (d * c - a * f) * invDet;
-			result.val[6] = C * invDet; result.val[7] = (g * b - a * h) * invDet; result.val[8] = (a * e - d * b) * invDet;
+			result.val.data[0] = A * invDet; result.val.data[1] = (c * h - b * i) * invDet; result.val.data[2] = (b * f - c * e) * invDet;
+			result.val.data[3] = B * invDet; result.val.data[4] = (a * i - c * g) * invDet; result.val.data[5] = (d * c - a * f) * invDet;
+			result.val.data[6] = C * invDet; result.val.data[7] = (g * b - a * h) * invDet; result.val.data[8] = (a * e - d * b) * invDet;
 		} break;
 		case 4: {
 			// TODO: learn abt how this works - ai wrote this
 
-			const m = mR.val;
-			const inv = result.val;
+			const m = mR.val.data;
+			const inv = result.val.data;
 			let det = 0;
 
 			// First column cofactors
@@ -405,7 +399,7 @@ export function inverse(call: FunctionCall, iter: ProgramIterator, dst: Slot): E
 
 			// If the matrix is singular, error out
 			if (det == 0) {
-				return setError(dst, "This matrix has no inverse");
+				return setError(iter, call.arguments[0], "This matrix has no inverse");
 			}
 
 			// Multiply adjoint by the determinant
@@ -413,25 +407,30 @@ export function inverse(call: FunctionCall, iter: ProgramIterator, dst: Slot): E
 				inv[i] = inv[i] * det;
 			}
 		} break;
-		default: return setError(dst, "We dont support inverting a matrix larger than 4, sorry");
+		// TODO: LU decomposition (but we dont care too much about the larger matrices yet though)
+		default: return setError(iter, call.arguments[0], "We dont support inverting a matrix larger than 4, sorry");
 	}
 
-	for (let row = 0; row < mR.rows; row++) {
-		for (let col = 0; col < mR.cols; col++) {
-			const srcIdx = matrixGetIdx(mR, row, col);
-			const dstIdx = matrixGetIdx(result, col, row);
-			result.val[dstIdx] = mR.val[srcIdx];
+	for (let row = 0; row < mR.val.rows; row++) {
+		for (let col = 0; col < mR.val.cols; col++) {
+			const srcIdx = matrixGetIndex(mR.val, row, col);
+			const dstIdx = matrixGetIndex(result.val, col, row);
+			result.val.data[dstIdx] = mR.val.data[srcIdx];
 		}
 	}
 
-	return setResult(dst, result);
+	return setResult(iter, result);
 }
 
-export function len(call: FunctionCall, iter: ProgramIterator, dst: Slot): ExprReturn {
-	if (checkNumArgs(call, "len", 1, dst)) return RETURN_ERR;
-	if (evaluateExpressionValue(call.arguments[0], iter, dst) === RETURN_ERR) return RETURN_ERR;
-	if (dst.result.type === Result_String) return setResultNumber(dst, dst.result.val.length);
-	if (dst.result.type === Result_List)   return setResultNumber(dst, dst.result.val.length);
-	if (dst.result.type === Result_Map)    return setResultNumber(dst, dst.result.val.size);
-	return setError(dst, "Can't get the length of a " + resultTypeToString(dst.result.type));
+export function len(call: FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (checkNumArgs(call, "len", 1, iter)) return RETURN_ERROR;
+
+	const val = evaluateExpressionValue(call.arguments[0], iter);
+	if (!val) return RETURN_ERROR;
+
+	if (val.type === Result_String) return setResultNumber(iter, val.val.length);
+	if (val.type === Result_List)   return setResultNumber(iter, val.val.length);
+	if (val.type === Result_Map)    return setResultNumber(iter, val.val.size);
+
+	return setError(iter, call, "Can't get the length of a " + resultTypeToString(val.type));
 }
