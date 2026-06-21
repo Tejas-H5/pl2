@@ -1,6 +1,6 @@
 import { assert, assertNever } from "./assert";
 import * as ast from "./ast";
-import { cloneMatrix, matrixSetAxis, matrixGetIndex, matrixValuesToString, Matrix } from "./matrix";
+import * as matrix from "./matrix";
 import { newParser } from "./parser";
 
 export const Result_Nothing  = 0; // Also represented with 'undefined'
@@ -94,7 +94,7 @@ export type ResultVector = ResultBase & {
 
 export type ResultMatrix = ResultBase & {
 	type: typeof Result_Matrix;
-	val: Matrix;
+	val: matrix.Matrix;
 };
 
 export type Result =
@@ -120,7 +120,7 @@ export function cloneResultIfValueSemantics(src: Result): Result {
 		case Result_BuiltinFunction:   return { type: src.type, val: src.val };
 		// These container types will actually have value semantics
 		case Result_Vector: return { type: src.type, val: src.val.map(x => x) };
-		case Result_Matrix: return { type: src.type, val: cloneMatrix(src.val) };
+		case Result_Matrix: return { type: src.type, val: matrix.clone(src.val) };
 		// Typical by-reference semantics
 		case Result_List:              return { type: src.type, val: src.val };
 		case Result_Map:			   return { type: src.type, val: src.val };
@@ -605,7 +605,7 @@ export function evaluateUnaryOperation(expr: ast.UnaryExpression, iter: ProgramI
 	if (exprResult.type === Result_Matrix) {
 		const result: ResultMatrix = {
 			type: Result_Matrix,
-			val:  cloneMatrix(exprResult.val),
+			val:  matrix.clone(exprResult.val),
 		};
 
 		switch (expr.op) {
@@ -702,7 +702,7 @@ export function evaluateAssignment(expr: ast.BinaryExpression, iter: ProgramIter
 					if (index.type !== Result_Number)                  return setError(iter, expr.lhs.indexes[0], "Matrix index should be a number");
 					if (index.val < 0 || index.val >= target.val.cols) return setError(iter, expr.lhs.indexes[0], `Index [${index.val}] out-of-bounds (${target.val.cols} cols)`);
 
-					matrixSetAxis(target.val, value.val, index.val);
+					matrix.setAxis(target.val, value.val, index.val);
 				} else if (expr.lhs.indexes.length === 2) {
 					if (value.type !== Result_Number) return setError(iter, expr.rhs, "Matrix values should be numbers");
 
@@ -716,7 +716,7 @@ export function evaluateAssignment(expr: ast.BinaryExpression, iter: ProgramIter
 					if (col.type !== Result_Number) return setError(iter, expr.lhs.indexes[1], "Matrix column should be a number");
 					if (col.val < 0 || col.val >= target.val.cols) return setError(iter, expr.lhs.indexes[0], `Index [${col.val}] out-of-bounds (${target.val.cols} rows)`);
 
-					const idx = matrixGetIndex(target.val, row.val, col.val);
+					const idx = matrix.getIndex(target.val, row.val, col.val);
 					target.val.data[idx] = value.val;
 				} else {
 					return setError(iter, expr.lhs, "Too many index expressions for this matrix, just do [columnIdx] or [rowIdx, colIdx]");
@@ -1064,7 +1064,7 @@ function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator): ExprReturn {
 					val: Array(target.val.rows).fill(0),
 				};
 				for (let i = 0; i < result.val.length; i++) {
-					const idx = matrixGetIndex(target.val, i, index.val);
+					const idx = matrix.getIndex(target.val, i, index.val);
 					result.val[i] = target.val.data[idx];
 				}
 
@@ -1082,7 +1082,7 @@ function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator): ExprReturn {
 				if (col.type !== Result_Number) return setError(iter, expr.indexes[1], "Matrix column should be a number");
 				if (col.val < 0 || col.val >= target.val.cols) return setError(iter, expr.indexes[0], `Index [${col.val}] out-of-bounds (${target.val.cols} rows)`);
 
-				const idx = matrixGetIndex(target.val, row.val, col.val);
+				const idx = matrix.getIndex(target.val, row.val, col.val);
 				return setResultNumber(iter, target.val.data[idx]);
 			}
 
@@ -1170,7 +1170,7 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 				
 				const minSize = Math.min(rows, cols);
 				for (let i = 0; i < minSize; i++) {
-					const idx = matrixGetIndex(result.val, i, i);
+					const idx = matrix.getIndex(result.val, i, i);
 					result.val.data[idx] = diagonalValue.val;
 				}
 			} else {
@@ -1232,7 +1232,7 @@ export function resultToString(result: Result): string {
 		case Result_List:     return "list[" + result.val.map(resultToString).join(", ") + "]";
 		case Result_Map:      return "map[" + [...result.val.values()].map((e) => resultToString(e.key) + " -> " + resultToString(e.val)).join(", ") + "]";
 		case Result_Vector:   return "vec[" + result.val.map(v => "" + v).join(", ") + "]";
-		case Result_Matrix:   return "mat[" + matrixValuesToString(result.val) + "\n]";
+		case Result_Matrix:   return "mat[" + matrix.toString(result.val) + "\n]";
 		default: assertNever(result);
 	}
 	return "unknown string representation";
@@ -1417,49 +1417,25 @@ export function mul(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
 	if (!a1) return RETURN_ERROR;
 
 	if (a0.type === Result_Matrix && a1.type === Result_Vector) {
-		if (a0.val.cols !== a1.val.length) return setError(iter, call, "m1.cols !== vec.length");
-
 		const result: Result = {
 			type: Result_Vector,
 			val:  Array(a0.val.cols).fill(0),
 		};
 
-		for (let a1Row = 0; a1Row < a0.val.rows; a1Row++) {
-			let sum = 0;
-			for (let k = 0; k < a0.val.cols; k++) {
-				const a1Idx = matrixGetIndex(a0.val, a1Row, k);
-				sum += a0.val.data[a1Idx] * a1.val[k];
-			}
-			result.val[a1Row] = sum;
-		}
+		const err = matrix.mulVec(a0.val, a1.val, result.val);
+		if (err) return setError(iter, call, err);
 
 		return setResult(iter, result);
 	}
 
 	if (a0.type === Result_Matrix && a1.type === Result_Matrix) {
-		if (a0.val.cols !== a1.val.rows) return setError(iter, call, "m1.cols !== m2.rows");
-
 		const result: Result = {
 			type: Result_Matrix,
-			val: {
-				rows: a0.val.rows,
-				cols: a1.val.cols,
-				data: Array(a0.val.cols * a1.val.rows).fill(0),
-			}
+			val: matrix.mulMatrixAllocate(a0.val, a1.val),
 		};
 
-		for (let a1Row = 0; a1Row < a0.val.rows; a1Row++) {
-			for (let a2Col = 0; a2Col < a1.val.cols; a2Col++) {
-				let sum = 0;
-				for (let k = 0; k < a0.val.cols; k++) {
-					const a1Idx = matrixGetIndex(a0.val, a1Row, k);
-					const a2Idx = matrixGetIndex(a1.val, k, a2Col);
-					sum += a0.val.data[a1Idx] * a1.val.data[a2Idx];
-				}
-				const resultIdx = matrixGetIndex(result.val, a1Row, a2Col);
-				result.val.data[resultIdx] = sum;
-			}
-		}
+		const err = matrix.mulMatrix(a0.val, a1.val, result.val);
+		if (err) return setError(iter, call, err);
 
 		return setResult(iter, result);
 	}
@@ -1475,20 +1451,8 @@ export function transpose(call: ast.FunctionCall, iter: ProgramIterator): ExprRe
 
 	const result: Result = {
 		type: Result_Matrix,
-		val: {
-			rows: m.val.cols,
-			cols: m.val.rows,
-			data: Array(m.val.rows * m.val.cols).fill(0),
-		}
+		val: matrix.transposed(m.val),
 	};
-
-	for (let row = 0; row < m.val.rows; row++) {
-		for (let col = 0; col < m.val.cols; col++) {
-			const srcIdx = matrixGetIndex(m.val, row, col);
-			const dstIdx = matrixGetIndex(result.val, col, row);
-			result.val.data[dstIdx] = m.val.data[srcIdx];
-		}
-	}
 
 	return setResult(iter, result);
 }
@@ -1499,148 +1463,14 @@ export function inverse(call: ast.FunctionCall, iter: ProgramIterator): ExprRetu
 	const mR = evaluateExpressionValue(call.arguments[0], iter);
 	if (!mR)                         return RETURN_ERROR;
 	if (mR.type !== Result_Matrix)   return setError(iter, call, "Need a matrix");
-	if (mR.val.rows !== mR.val.cols) return setError(iter, call, "Only square matrices are invertible");
 
 	const result: Result = {
 		type: Result_Matrix,
-		val: {
-			rows: mR.val.rows,
-			cols: mR.val.cols,
-			data: Array(mR.val.rows * mR.val.cols).fill(0),
-		}
+		val: matrix.clone(mR.val),
 	};
 
-	switch (mR.val.rows) {
-		case 1: {
-			result.val.data[0] = 1 / result.val.data[0]
-		} break;
-		case 2: {
-			const aIdx = matrixGetIndex(result.val, 0, 0)
-			const bIdx = matrixGetIndex(result.val, 0, 1)
-			const cIdx = matrixGetIndex(result.val, 1, 0)
-			const dIdx = matrixGetIndex(result.val, 1, 1)
-
-			const a = mR.val.data[aIdx];
-			const b = mR.val.data[bIdx];
-			const c = mR.val.data[cIdx];
-			const d = mR.val.data[dIdx];
-
-			const det =  a * d - (b * c);
-			result.val.data[aIdx] = d / det;
-			result.val.data[bIdx] = -b / det;
-			result.val.data[cIdx] = -c / det;
-			result.val.data[dIdx] = a / det;
-		} break;
-		case 3: {
-			// TODO: learn abt how this works - ai wrote this
-
-			const aIdx = matrixGetIndex(result.val, 0, 0); const bIdx = matrixGetIndex(result.val, 0, 1); const cIdx = matrixGetIndex(result.val, 0, 2);
-			const dIdx = matrixGetIndex(result.val, 1, 0); const eIdx = matrixGetIndex(result.val, 1, 1); const fIdx = matrixGetIndex(result.val, 1, 2);
-			const gIdx = matrixGetIndex(result.val, 2, 0); const hIdx = matrixGetIndex(result.val, 2, 1); const iIdx = matrixGetIndex(result.val, 2, 2);
-
-			const a = result.val.data[aIdx]; const b = result.val.data[bIdx]; const c = result.val.data[cIdx];
-			const d = result.val.data[dIdx]; const e = result.val.data[eIdx]; const f = result.val.data[fIdx];
-			const g = result.val.data[gIdx]; const h = result.val.data[hIdx]; const i = result.val.data[iIdx];
-
-			const A = (e * i - h * f);
-			const B = (f * g - d * i);
-			const C = (d * h - g * e);
-
-			const det = a * A + b * B + c * C;
-			if (Math.abs(det) < 0.00001) {
-				return setError(iter, call.arguments[0], "Matrix doesn't have an inverse");
-			}
-
-			const invDet = 1.0 / det;
-
-			result.val.data[0] = A * invDet; result.val.data[1] = (c * h - b * i) * invDet; result.val.data[2] = (b * f - c * e) * invDet;
-			result.val.data[3] = B * invDet; result.val.data[4] = (a * i - c * g) * invDet; result.val.data[5] = (d * c - a * f) * invDet;
-			result.val.data[6] = C * invDet; result.val.data[7] = (g * b - a * h) * invDet; result.val.data[8] = (a * e - d * b) * invDet;
-		} break;
-		case 4: {
-			// TODO: learn abt how this works - ai wrote this
-
-			const m = mR.val.data;
-			const inv = result.val.data;
-			let det = 0;
-
-			// First column cofactors
-			inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] +
-					 m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
-
-			inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] -
-					 m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
-
-			inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] +
-					 m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
-
-			inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] -
-					  m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
-
-			// Second column cofactors
-			inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] -
-					 m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
-
-			inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] +
-					 m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
-
-			inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] -
-					 m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
-
-			inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] +
-					  m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
-
-			// Third column cofactors
-			inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] +
-					 m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
-
-			inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] -
-					 m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
-
-			inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] +
-					  m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
-
-			inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] -
-					  m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
-
-			// Fourth column cofactors
-			inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] -
-					 m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
-
-			inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] +
-					 m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
-
-			inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] -
-					  m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
-
-			inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] +
-					  m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
-
-			// Calculate the determinant
-			det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
-
-			// If the matrix is singular, error out
-			if (det == 0) {
-				return setError(iter, call.arguments[0], "This matrix has no inverse");
-			}
-
-			// Multiply adjoint by the determinant
-			for (let i = 0; i < 16; i++) {
-				inv[i] = inv[i] * det;
-			}
-		} break;
-		// TODO: LU decomposition (but we dont care too much about the larger matrices yet though)
-		default: return setError(iter, call.arguments[0], "We dont support inverting a matrix larger than 4, sorry");
-	}
-
-	for (let row = 0; row < mR.val.rows; row++) {
-		for (let col = 0; col < mR.val.cols; col++) {
-			const srcIdx = matrixGetIndex(mR.val, row, col);
-			const dstIdx = matrixGetIndex(result.val, col, row);
-			result.val.data[dstIdx] = mR.val.data[srcIdx];
-		}
-	}
-
+	const err = matrix.invert(mR.val);
+	if (err) return setError(iter, call, err);
 	return setResult(iter, result);
 }
 
@@ -1747,3 +1577,4 @@ export const builtins: Record<string, Result> = {
 export function getBuiltin(name: string): Result | undefined {
 	return builtins[name];
 }
+
