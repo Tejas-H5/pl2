@@ -38,6 +38,7 @@ export const OP_GREATER_THAN    = 14;
 export const OP_GREATER_THAN_EQ = 15;
 export const OP_EQ              = 16;
 export const OP_NOT_EQ          = 17;
+export const OP_STRICT_EQ       = 18; // Webdev detected
 
 export type BinaryOperatorType =
  | typeof OP_NONE
@@ -58,28 +59,46 @@ export type BinaryOperatorType =
  | typeof OP_GREATER_THAN_EQ
  | typeof OP_EQ
  | typeof OP_NOT_EQ
+ | typeof OP_STRICT_EQ
  ;
+
+export const UNARY_OP_NOT         = 1;
+export const UNARY_OP_BITWISE_NOT = 2;
+
+export type UnaryOperator = 
+ | typeof UNARY_OP_NOT
+ | typeof UNARY_OP_BITWISE_NOT
+ ; 
+
+export function unaryOperatorToString(op: UnaryOperator): string {
+	switch (op) {
+		case UNARY_OP_NOT:         return "!";
+		case UNARY_OP_BITWISE_NOT: return "~";
+		default: assertNever(op);
+	}
+}
 
 export function operatorToString(op: BinaryOperatorType): string {
 	switch(op) {
-		case OP_NONE:        return "<no operator>";
-		case OP_ADD:         return "+";
-		case OP_SUBTRACT:    return "-";
-		case OP_MULTIPLY:    return "*";
-		case OP_DIVIDE:      return "/";
-		case OP_MODULO:      return "%";
-		case OP_LOGICAL_AND: return "&&";
-		case OP_BITWISE_AND: return "&";
-		case OP_LOGICAL_OR:  return "||";
-		case OP_BITWISE_OR:  return "|";
-		case OP_LOGICAL_XOR: return "^^";
-		case OP_BITWISE_XOR: return "|";
+		case OP_NONE:            return "<no operator>";
+		case OP_ADD:             return "+";
+		case OP_SUBTRACT:        return "-";
+		case OP_MULTIPLY:        return "*";
+		case OP_DIVIDE:          return "/";
+		case OP_MODULO:          return "%";
+		case OP_LOGICAL_AND:     return "&&";
+		case OP_BITWISE_AND:     return "&";
+		case OP_LOGICAL_OR:      return "||";
+		case OP_BITWISE_OR:      return "|";
+		case OP_LOGICAL_XOR:     return "^^";
+		case OP_BITWISE_XOR:     return "|";
 		case OP_LESS_THAN:       return "<";
 		case OP_LESS_THAN_EQ:    return "<=";
 		case OP_GREATER_THAN:    return ">";
 		case OP_GREATER_THAN_EQ: return ">=";
-		case OP_EQ:              return "=="; // Look out for conflicts with the = operator !
-		case OP_NOT_EQ:          return "!="; // Look out for conflicts with the ! operator !
+		case OP_STRICT_EQ:       return "==="; 
+		case OP_EQ:              return "==";  // Look out for conflicts with the = operator !
+		case OP_NOT_EQ:          return "!=";  // Look out for conflicts with the ! operator !
 		default: assertNever(op);
 	}
 	return "?";
@@ -107,6 +126,7 @@ export const Expression_ReturnBlock        = 13; // I have wanted this construct
 export const Expression_BooleanLiteral     = 14;
 export const Expression_Indexer            = 15;
 export const Expression_ForLoopRange       = 16;
+export const Expression_UnaryExpression    = 17;
 
 export function expressionTypeToString(type: ExpressionType): string {
 	switch (type) {
@@ -132,6 +152,12 @@ export type ExpressionBase = {
 	type:   number;
 	start:  TextPosition;
 	end:    TextPosition;
+}
+
+export type UnaryExpression = ExpressionBase & {
+	type: typeof Expression_UnaryExpression;
+	op:   UnaryOperator;
+	expr: Expression;
 }
 
 export type BinaryExpression = ExpressionBase & {
@@ -256,6 +282,7 @@ export type DataType = {
 }
 
 export type Expression = 
+ | UnaryExpression
  | BinaryExpression
  | Identifier
  | FunctionCall
@@ -305,6 +332,11 @@ export function parseWhitespace(parser: Parser) {
             continue;
         }
 
+		// Old habits die hard
+		if (compareAndAdvance(parser, ";")) {
+			continue;
+		}
+
         break;
     }
 }
@@ -333,23 +365,24 @@ export function parseIdentifier(parser: Parser): Identifier | undefined {
 }
 
 export function parseOperatorInternal(parser: Parser): BinaryOperatorType {
-	if (compareCurrent(parser, "+"))  { advanceBy(parser, 1); return OP_ADD; }
-	if (compareCurrent(parser, "-"))  { advanceBy(parser, 1); return OP_SUBTRACT; }
-	if (compareCurrent(parser, "*"))  { advanceBy(parser, 1); return OP_MULTIPLY; }
-	if (compareCurrent(parser, "/"))  { advanceBy(parser, 1); return OP_DIVIDE; }
-	if (compareCurrent(parser, "%"))  { advanceBy(parser, 1); return OP_MODULO; }
-	if (compareCurrent(parser, "&&")) { advanceBy(parser, 2); return OP_LOGICAL_AND; }
-	if (compareCurrent(parser, "&"))  { advanceBy(parser, 1); return OP_BITWISE_AND; }
-	if (compareCurrent(parser, "||")) { advanceBy(parser, 2); return OP_LOGICAL_OR; }
-	if (compareCurrent(parser, "|"))  { advanceBy(parser, 1); return OP_BITWISE_OR; }
-	if (compareCurrent(parser, "^^")) { advanceBy(parser, 2); return OP_LOGICAL_XOR; }
-	if (compareCurrent(parser, "^"))  { advanceBy(parser, 1); return OP_BITWISE_XOR; }
-	if (compareCurrent(parser, "<=")) { advanceBy(parser, 2); return OP_LESS_THAN_EQ; }
-	if (compareCurrent(parser, "<"))  { advanceBy(parser, 1); return OP_LESS_THAN; }
-	if (compareCurrent(parser, ">=")) { advanceBy(parser, 2); return OP_GREATER_THAN_EQ; }
-	if (compareCurrent(parser, ">"))  { advanceBy(parser, 1); return OP_GREATER_THAN; }
-	if (compareCurrent(parser, "==")) { advanceBy(parser, 2); return OP_EQ; }
-	if (compareCurrent(parser, "!=")) { advanceBy(parser, 2); return OP_NOT_EQ; }
+	if (compareAndAdvance(parser, "+"))  return OP_ADD;
+	if (compareAndAdvance(parser, "-"))  return OP_SUBTRACT;
+	if (compareAndAdvance(parser, "*"))  return OP_MULTIPLY;
+	if (compareAndAdvance(parser, "/"))  return OP_DIVIDE;
+	if (compareAndAdvance(parser, "%"))  return OP_MODULO;
+	if (compareAndAdvance(parser, "&&")) return OP_LOGICAL_AND;
+	if (compareAndAdvance(parser, "&"))  return OP_BITWISE_AND;
+	if (compareAndAdvance(parser, "||")) return OP_LOGICAL_OR;
+	if (compareAndAdvance(parser, "|"))  return OP_BITWISE_OR;
+	if (compareAndAdvance(parser, "^^")) return OP_LOGICAL_XOR;
+	if (compareAndAdvance(parser, "^"))  return OP_BITWISE_XOR;
+	if (compareAndAdvance(parser, "<=")) return OP_LESS_THAN_EQ;
+	if (compareAndAdvance(parser, "<"))  return OP_LESS_THAN;
+	if (compareAndAdvance(parser, ">=")) return OP_GREATER_THAN_EQ;
+	if (compareAndAdvance(parser, ">"))  return OP_GREATER_THAN;
+	if (compareAndAdvance(parser, "==="))return OP_STRICT_EQ;
+	if (compareAndAdvance(parser, "==")) return OP_EQ;
+	if (compareAndAdvance(parser, "!=")) return OP_NOT_EQ;
 	return OP_NONE;
 }
 
@@ -365,7 +398,7 @@ function operatorCanBeCombinedWithAssignment(op: BinaryOperatorType): boolean {
 	return true;
 }
 
-export function parseOperator(parser: Parser): BinaryOperator | undefined {
+export function parseBinaryOperator(parser: Parser): BinaryOperator | undefined {
 	parseWhitespace(parser);
 
 	const op = parseOperatorInternal(parser);
@@ -384,6 +417,12 @@ export function parseOperator(parser: Parser): BinaryOperator | undefined {
 		type: op,
 		assignment: assignment,
 	};
+}
+
+export function parseUnaryOperator(parser: Parser): UnaryOperator | undefined {
+	if (compareAndAdvance(parser, "!")) return UNARY_OP_NOT;
+	if (compareAndAdvance(parser, "~")) return UNARY_OP_BITWISE_NOT;
+	return undefined;
 }
 
 export function parseGroup(parser: Parser): Expression | undefined {
@@ -666,8 +705,28 @@ export function parseSingularExpressionInternal(parser: Parser): Expression | un
 }
 
 export function parseSingularExpression(parser: Parser): Expression | undefined {
+	const pos = parserPos(parser);
+
+	const unaryOp = parseUnaryOperator(parser);
+	if (unaryOp !== undefined) {
+		const expr = parseSingularExpression(parser);
+		if (!expr) {
+			// TODO: error
+			return undefined;
+		}
+
+		return {
+			type:  Expression_UnaryExpression,
+			start: pos,
+			end:   parserPos(parser),
+			op:    unaryOp,
+			expr:  expr,
+		};
+	}
+
 	let expr = parseSingularExpressionInternal(parser);
 	if (!expr) {
+		// The actual expression is mandatory
 		return undefined;
 	}
 
@@ -733,7 +792,7 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 		parseWhitespace(parser);
 
 		if (!op) {
-			op = parseOperator(parser);
+			op = parseBinaryOperator(parser);
 			if (!op) {
 				// TODO: report expected operator error
 				break;
@@ -891,6 +950,7 @@ export function getOpLevel(op: BinaryOperatorType): number {
 		case OP_GREATER_THAN_EQ: return 3;
 		case OP_EQ:              return 3;
 		case OP_NOT_EQ:          return 3;
+		case OP_STRICT_EQ:       return 3;
 
 		case OP_ADD:             return 4;
 		case OP_SUBTRACT:        return 4;

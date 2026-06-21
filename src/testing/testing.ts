@@ -85,8 +85,8 @@ export function testFailure(r: TestResult, message: string) {
 	r.fails.push(message);
 }
 
-export function addTest(name: string, fn: ((r: TestResult) => void)) {
-	const g = groups[groups.length - 1];
+export function addTest(name: string, fn: ((r: TestResult) => void), g?: TestGroup) {
+	if (!g) g = groups[groups.length - 1];
 
 	if (!g.tests) {
 		g.tests = [];
@@ -98,8 +98,12 @@ export function addTest(name: string, fn: ((r: TestResult) => void)) {
 		checks: 0,
 		time: 0,
 		fn,
-		// easier to grep than a boolean flag, and
-		// it works well with table-driven testing too since I can add [debug] to the name directly.
+		// easier to grep than a boolean flag, and it works well with table-driven testing too since 
+		// I can add [debug] to the name directly. this allows me to build abstractions like
+		// addAllTestCases(r, [ 
+		//		{ name: "blah", case: ..., expected: ... },
+		// ])
+		// And if I just want to run a single test, I add [debug] to the name itself.
 		isDebugging: name.startsWith("[debug]"), 
 	};
 
@@ -135,16 +139,13 @@ function pushGroup(name: string) {
 	}
 }
 
-// _coveredSymbols allows us to quickly navigate to what we're trying to cover with a particular test.
+// _tryingToCover allows us to quickly navigate to what we're trying to cover with a particular higher level test, and
+// vice-versa. If you ever remove or change those internal methods, you're documenting which tests you _expect_ to be affected by this.
 // It's more useful when the functionality you're covering is not being provided by the functions you call in the test itself.
 // Rather than typing the name via a string, inserting the symbol allows the LSP to automatically keep names in sync,
 // and notify us when those things get removed from the codebase.
 // You can just leave it empty most of the time, but sometimes it's useful to make some symbols easier to navigate to.
-export function addTestGroup(
-	name: string,
-	_tryingToCover: unknown[],
-	registerFn: () => void
-) {
+export function addTestGroup(name: string, _tryingToCover: unknown[], registerFn: () => void) {
 	pushGroup(name);
 
 	try {
@@ -222,6 +223,12 @@ export function runAllTests(): TestContext {
 
 function runAllTestsInternal(groups: TestGroup[], debugOnly: boolean) {
 	for (const group of groups) {
+		if (!group.tests && !group.subgroups) {
+			addTest("This group didn't have any tests", r => {
+				test(r, false, "");
+			}, group);
+		} 
+
 		if (group.tests) {
 			for (const test of group.tests) {
 				if (debugOnly && !test.isDebugging) {

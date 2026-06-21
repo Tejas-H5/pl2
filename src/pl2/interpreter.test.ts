@@ -1,14 +1,56 @@
-import { test, testFailure, addTest, addTestGroup, setCurrentTestFile, testAssert, testDeepEqual, testEqual, TestResult } from "src/testing/testing";
-import * as pl2 from "./interpreter";
+import {
+	test,
+	testFailure,
+	addTest,
+	addTestGroup,
+	setCurrentTestFile,
+	testAssert,
+	testDeepEqual,
+	testEqual,
+	TestResult
+} from "src/testing/testing";
 import { assertNever } from "./assert";
 import { expressionToString } from "./ast";
+import * as pl2 from "./interpreter";
 
-setCurrentTestFile("src/pl2/interpreter.test.ts", pl2.interpretProgram);
+setCurrentTestFile("src/interpreter.test.ts", pl2.interpretProgram);
 
-export function testNoErrors(r: TestResult, p: pl2.ProgramIterator) {
+type TestCase = {
+	name: string;
+	program?: string;
+	code: string;
+	expected: pl2.Result;
+};
+
+function addAllTestCases(cases: TestCase[]) {
+	for (const testCase of cases) {
+		addTest(testCase.name, r => {
+			const ctx = pl2.interpretCode(testCase.program ?? "");
+			if (testNoErrors(r, ctx)) {
+				const [result, err] = pl2.evaluateCode(testCase.code, ctx);
+				testEqual(r, err, undefined);
+				testEqualResult(r, result, testCase.expected);
+			}
+		});
+	}
+}
+
+export function testNoErrors(r: TestResult, p: pl2.ProgramIterator): boolean {
 	if (!testEqual(r, p.lastResult.error?.message, undefined)) {
 		testFailure(r, "'" + expressionToString(p.program.code, p.lastResult.error!.expr) + "'");
+		return false;
 	}
+	return true;
+}
+
+export function testEqualError(r: TestResult, p: pl2.ProgramIterator, expectedError?: string): boolean {
+	let result;
+	if (expectedError) {
+		result = testEqual(r, p.lastResult.error?.message, expectedError);
+	} else {
+		result = test(r, !!p.lastResult.error?.message);
+	}
+	return result;
 }
 
 function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, message = "") {
@@ -71,17 +113,23 @@ function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, mes
 }
 
 function testEqualLogs(r: TestResult, result: pl2.ProgramIterator, expected: string[]) {
-	if (testEqual(r, result.logs.length, expected.length)) {
-		for (let i = 0; i < expected.length; i++) {
-			const line = expected[i];
-			const got = result.logs[i].text;
-			testEqual(r, got, line, "line " + i);
+	if (!testEqual(r, result.logs.length, expected.length)) {
+		testFailure(r, "Logs: ");
+		for (const log of result.logs) {
+			testFailure(r, log.text);
 		}
+		return;
+	}
+
+	for (let i = 0; i < expected.length; i++) {
+		const line = expected[i];
+		const got = result.logs[i].text;
+		testEqual(r, got, line, "line " + i);
 	}
 }
 
-addTestGroup("Binary operations", [], () => {
-	addTestGroup("Assignment", [], () => {
+addTestGroup("Binary expressions", [pl2.evaluateBinaryOperation], () => {
+	addTestGroup("Assignment", [pl2.evaluateAssignment], () => {
 		addTest("Normal assigning", r => {
 			const result = pl2.interpretCode("x = 1");
 
@@ -109,69 +157,46 @@ addTestGroup("Binary operations", [], () => {
 			testEqualResult(r, x, { type: pl2.Result_Number, val: 1 });
 		});
 
-		addTestGroup("Increment assigning", [], () => {
+		addTestGroup("Increment assigning", [pl2.evaluateAssignment, pl2.evaluateBinaryOperation], () => {
 			addTest("Error case", r => {
 				const result = pl2.interpretCode("x += 2");
 				const [, err] = pl2.evaluateCode("x", result);
 				testEqual(r, err, "Variable not found: x");
 			});
 
-			const tests = [
-				{ sample: "x = 0\n x += 2", expected: pl2.newNumber(2) },
-				{ sample: "x = 0\n x -= 2", expected: pl2.newNumber(-2) },
-				{ sample: "x = 2\n x *= 2", expected: pl2.newNumber(4) },
-				{ sample: "x = 2\n x *= -2", expected: pl2.newNumber(-4) },
-				{ sample: "x = 3\n x %= 2", expected: pl2.newNumber(1) },
-
-				{ sample: "x = true\n x &&= true",   expected: pl2.newBoolean(true) },
-				{ sample: "x = false\n x &&= true",  expected: pl2.newBoolean(false) },
-				{ sample: "x = false\n x ||= true",  expected: pl2.newBoolean(true) },
-				{ sample: "x = false\n x ||= false", expected: pl2.newBoolean(false) },
-				{ sample: "x = false\n x ^^= true",  expected: pl2.newBoolean(true) },
-			];
-
-			for (const test of tests) {
-				addTest("Normal cases - " + test.sample, r => {
-					const result = pl2.interpretCode(test.sample);
-					const [x, err] = pl2.evaluateCode("x", result);
-					testEqual(r, err, undefined);
-					testEqualResult(r, x, test.expected, test.sample);
-				});
-			}
+			addAllTestCases([
+				{ code: "x", name: "+= ", program: "x = 0\n     x += 2",      expected: pl2.newNumber(2) },
+				{ code: "x", name: "-= ", program: "x = 0\n     x -= 2",      expected: pl2.newNumber(-2) },
+				{ code: "x", name: "*= ", program: "x = 2\n     x *= 2",      expected: pl2.newNumber(4) },
+				{ code: "x", name: "*= ", program: "x = 2\n     x *= -2",     expected: pl2.newNumber(-4) },
+				{ code: "x", name: "%= ", program: "x = 3\n     x %= 2",      expected: pl2.newNumber(1) },
+				{ code: "x", name: "&&=", program: "x = true\n  x &&= true",  expected: pl2.newBoolean(true) },
+				{ code: "x", name: "&&=", program: "x = false\n x &&= true",  expected: pl2.newBoolean(false) },
+				{ code: "x", name: "||=", program: "x = false\n x ||= true",  expected: pl2.newBoolean(true) },
+				{ code: "x", name: "||=", program: "x = false\n x ||= false", expected: pl2.newBoolean(false) },
+				{ code: "x", name: "^^=", program: "x = false\n x ^^= true",  expected: pl2.newBoolean(true) },
+			]);
 		});
 
 		addTestGroup("Comparisons", [], () => {
-			const tests = [
-				{ name: "test 0", sample: "x = 1 < 2", expected: pl2.newBoolean(true) },
-				{ name: "test 1", sample: "x = 2 < 2", expected: pl2.newBoolean(false) },
-
-				{ name: "test 2", sample: "x = 1 <= 2", expected: pl2.newBoolean(true) },
-				{ name: "test 3", sample: "x = 2 <= 2", expected: pl2.newBoolean(true) },
-				{ name: "test 4", sample: "x = 3 <= 2", expected: pl2.newBoolean(false) },
-
-				{ name: "test 5", sample: "x = 3 > 2", expected: pl2.newBoolean(true) },
-				{ name: "test 6", sample: "x = 2 > 2", expected: pl2.newBoolean(false) },
-
-				{ name: "test 7", sample: "x = 3 >= 2", expected: pl2.newBoolean(true) },
-				{ name: "test 8", sample: "x = 2 >= 2", expected: pl2.newBoolean(true) },
-				{ name: "test 9", sample: "x = 1 >= 2", expected: pl2.newBoolean(false) },
-
-				{ name: "test 10", sample: "x = 15 % 3 == 0", expected: pl2.newBoolean(true) },
-				{ name: "test 11", sample: "x = 15 % 5 == 0", expected: pl2.newBoolean(true) },
-				{ name: "test 12", sample: "x = 15 % 5 == 0 && 15 % 3 == 0", expected: pl2.newBoolean(true) },
-			];
-
-			for (const test of tests) {
-				addTest(test.name, r => {
-					const result = pl2.interpretCode(test.sample);
-					const [x, err] = pl2.evaluateCode("x", result);
-					testEqual(r, err, undefined);
-					testEqualResult(r, x, test.expected, test.sample);
-				});
-			}
+			addAllTestCases([
+				{ name: "<",               program: "x = 1 < 2",                      code: "x", expected: pl2.newBoolean(true) },
+				{ name: "<",               program: "x = 2 < 2",                      code: "x", expected: pl2.newBoolean(false) },
+				{ name: "<=",              program: "x = 1 <= 2",                     code: "x", expected: pl2.newBoolean(true) },
+				{ name: "<=",              program: "x = 2 <= 2",                     code: "x", expected: pl2.newBoolean(true) },
+				{ name: "<=",              program: "x = 3 <= 2",                     code: "x", expected: pl2.newBoolean(false) },
+				{ name: ">",               program: "x = 3 > 2",                      code: "x", expected: pl2.newBoolean(true) },
+				{ name: ">",               program: "x = 2 > 2",                      code: "x", expected: pl2.newBoolean(false) },
+				{ name: ">=",              program: "x = 3 >= 2",                     code: "x", expected: pl2.newBoolean(true) },
+				{ name: ">=",              program: "x = 2 >= 2",                     code: "x", expected: pl2.newBoolean(true) },
+				{ name: ">=",              program: "x = 1 >= 2",                     code: "x", expected: pl2.newBoolean(false) },
+				{ name: "binary expr lhs", program: "x = 15 % 3 == 0",                code: "x", expected: pl2.newBoolean(true) },
+				{ name: "binary expr rhs", program: "x = 15 % 5 == 0",                code: "x", expected: pl2.newBoolean(true) },
+				{ name: "complex expr",    program: "x = 15 % 5 == 0 && 15 % 3 == 0", code: "x", expected: pl2.newBoolean(true) },
+			]);
 		});
 
-		addTestGroup("Scope interactions", [], () => {
+		addTestGroup("Scope interactions", [pl2.getVar, pl2.setOrCreateVar, pl2.createVar], () => {
 			addTest("New variables should be created in the current scope", r => {
 				const result = pl2.interpretCode(`
 					do_thing = fn() {
@@ -208,14 +233,21 @@ addTestGroup("Binary operations", [], () => {
 
 			addTest("Should NOT be able to access variables through function scopes - they are non-capturing", r => {
 				const result = pl2.interpretCode(`
-					i = 0
 					do_thing = fn() {
 						print(i);
 					}
+
+					fn test() {
+						i = 12
+						do_thing()
+					}
+
 					do_thing()
 				`);
 
-				testEqualLogs(r,result, []);
+				testEqualLogs(r,result, [
+					"Variable not found: i",
+				]);
 			});
 
 			addTest("Should be able to mutate variables through return block scopes", r => {
@@ -262,7 +294,7 @@ addTestGroup("Binary operations", [], () => {
 		});
 	})
 
-	addTestGroup("Maths", [], () => {
+	addTestGroup("Maths", [pl2.evaluateAssignment], () => {
 		addTest("Quick maths", r => {
 			const result = pl2.interpretCodeLines([
 				"a = 1",
@@ -307,72 +339,58 @@ addTestGroup("Binary operations", [], () => {
 	});
 
 
-	addTestGroup("Vector elementwise ops", [], () => {
-		const tests: { code: string; expected: pl2.Result; debug: boolean; }[] = [
-			{ code: `vec{1, 2, 3}   +  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [4,  4, 4] }, debug: false, },
-			{ code: `vec{1, 2, 3}   -  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [-2, 0, 2] }, debug: false, },
-			{ code: `vec{1, 2, 3}   *  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [3,  4, 3] }, debug: false, },
-			{ code: `vec{5, 10, 15} /  vec{5, 5, 5}`, expected: { type: pl2.Result_Vector, val: [1, 2, 3] },  debug: false, },
-			{ code: `vec{1,2,3}     == vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 0, 0] },  debug: false, },
-			{ code: `vec{1,2,3}     != vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 1, 1] },  debug: false, },
-			{ code: `vec{1,2,3}     <  vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 1, 0] },  debug: false, },
-			{ code: `vec{1,2,3}     <= vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 1, 0] },  debug: false, },
-			{ code: `vec{1,2,3}     >  vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 0, 1] },  debug: false, },
-			{ code: `vec{1,2,3}     >= vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 0, 1] },  debug: false, },
-		];
-
-		for (const test of tests) {
-			addTest(test.code, r => {
-				const ctx = pl2.interpretCode("")
-				const [result, err] = pl2.evaluateCode(test.code, ctx);
-				testEqual(r, err, undefined);
-				testEqualResult(r, result, test.expected);
-			});
-		}
+	addTestGroup("Vector elementwise ops", [pl2.evaluateBinaryOperationOnResults], () => {
+		addAllTestCases([
+			{ name: `+ `, code: `vec{1, 2, 3}   +  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [4,  4, 4] }, },
+			{ name: `- `, code: `vec{1, 2, 3}   -  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [-2, 0, 2] }, },
+			{ name: `* `, code: `vec{1, 2, 3}   *  vec{3, 2, 1}`, expected: { type: pl2.Result_Vector, val: [3,  4, 3] }, },
+			{ name: `/ `, code: `vec{5, 10, 15} /  vec{5, 5, 5}`, expected: { type: pl2.Result_Vector, val: [1, 2, 3] },  },
+			{ name: `==`, code: `vec{1,2,3}     == vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 0, 0] },  },
+			{ name: `!=`, code: `vec{1,2,3}     != vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 1, 1] },  },
+			{ name: `< `, code: `vec{1,2,3}     <  vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 1, 0] },  },
+			{ name: `<=`, code: `vec{1,2,3}     <= vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 1, 0] },  },
+			{ name: `> `, code: `vec{1,2,3}     >  vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [0, 0, 1] },  },
+			{ name: `>=`, code: `vec{1,2,3}     >= vec{1, 3, 2}`, expected: { type: pl2.Result_Vector, val: [1, 0, 1] },  },
+		]);
 	});
 
-	addTestGroup("Matrix elementwise ops", [], () => {
-		const tests: { code: string; expected: pl2.Result }[] = [
-			{ code: `mat<1, 3>{1, 2, 3}   +  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [4,  4, 4] } } },
-			{ code: `mat<1, 3>{1, 2, 3}   -  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [-2, 0, 2] } } },
-			{ code: `mat<1, 3>{1, 2, 3}   *  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [3,  4, 3] } } },
-			{ code: `mat<1, 3>{5, 10, 15} /  mat<1, 3>{5, 5, 5}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 2, 3] } } },
-			{ code: `mat<1, 3>{1,2,3}     == mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 0, 0] } } },
-			{ code: `mat<1, 3>{1,2,3}     != mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 1, 1] } } },
-			{ code: `mat<1, 3>{1,2,3}     <  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 1, 0] } } },
-			{ code: `mat<1, 3>{1,2,3}     <= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 1, 0] } } },
-			{ code: `mat<1, 3>{1,2,3}     >  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 0, 1] } } },
-			{ code: `mat<1, 3>{1,2,3}     >= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 0, 1] } } },
-		];
-
-		for (const test of tests) {
-			addTest(test.code, r => {
-				const ctx = pl2.interpretCode("")
-				const [result, err] = pl2.evaluateCode(test.code, ctx);
-				testEqual(r, err, undefined);
-				testEqualResult(r, result, test.expected);
-			});
-		}
-	});
-
-	addTestGroup("Matrix ops ops", [], () => {
-		const tests: { prefix: string; code: string; expected: pl2.Result }[] = [
-			{ prefix: "", code: `mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2.Result_Vector, val: [3, 7] } },
-			{ prefix: "", code: `transpose(mat<2, 2>{1, 2, 3, 4})`, expected: { type: pl2.Result_Matrix, val: { rows: 2, cols: 2, data: [1, 3, 2, 4] } } },
-		];
-
-		for (const test of tests) {
-			addTest(test.prefix + test.code, r => {
-				const ctx = pl2.interpretCode("")
-				const [result, err] = pl2.evaluateCode(test.code, ctx);
-				testEqual(r, err, undefined);
-				testEqualResult(r, result, test.expected);
-			});
-		}
+	addTestGroup("Matrix elementwise ops", [pl2.evaluateBinaryOperationOnResults], () => {
+		addAllTestCases([
+			{ name: "+ ", code: `mat<1, 3>{1, 2, 3}   +  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [4,  4, 4] } } },
+			{ name: "- ", code: `mat<1, 3>{1, 2, 3}   -  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [-2, 0, 2] } } },
+			{ name: "* ", code: `mat<1, 3>{1, 2, 3}   *  mat<1, 3>{3, 2, 1}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [3,  4, 3] } } },
+			{ name: "/ ", code: `mat<1, 3>{5, 10, 15} /  mat<1, 3>{5, 5, 5}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 2, 3] } } },
+			{ name: "==", code: `mat<1, 3>{1,2,3}     == mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 0, 0] } } },
+			{ name: "!=", code: `mat<1, 3>{1,2,3}     != mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 1, 1] } } },
+			{ name: "< ", code: `mat<1, 3>{1,2,3}     <  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 1, 0] } } },
+			{ name: "<=", code: `mat<1, 3>{1,2,3}     <= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 1, 0] } } },
+			{ name: "> ", code: `mat<1, 3>{1,2,3}     >  mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [0, 0, 1] } } },
+			{ name: ">=", code: `mat<1, 3>{1,2,3}     >= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 0, 1] } } },
+		]);
 	});
 })
 
-addTestGroup("User functions", [], () => {
+addTestGroup("Unary operations", [pl2.evaluateUnaryOperation], () => {
+	addTestGroup("Booleans", [], () => {
+		addAllTestCases([
+			{ name: "!false", code: "!false",  expected: { type: pl2.Result_Boolean,  val: true } },
+			{ name: "!true", code: "!true",   expected: { type: pl2.Result_Boolean,   val: false } },
+			{ name: "!!false", code: "!!false", expected: { type: pl2.Result_Boolean, val: false } },
+			{ name: "!!true", code: "!!true",  expected: { type: pl2.Result_Boolean,  val: true } },
+		]);
+	});
+
+	addTestGroup("Numbers", [], () => {
+		addAllTestCases([
+			{ name: "!0",  code: "!0",   expected: { type: pl2.Result_Number, val: 1 } },
+			{ name: "!1",   code: "!1",  expected: { type: pl2.Result_Number, val: 0 } },
+			{ name: "!!0", code: "!!0",  expected: { type: pl2.Result_Number, val: 0 } },
+			{ name: "!!1",  code: "!!1", expected: { type: pl2.Result_Number, val: 1 } },
+		]);
+	});
+});
+
+addTestGroup("User functions", [pl2.evaluateFunctionCall], () => {
 	addTest("Can define a function", r => {
 		const result = pl2.interpretCode(`
 			increment = fn(x) {
@@ -401,7 +419,7 @@ addTestGroup("User functions", [], () => {
 	});
 });
 
-addTestGroup("Builtin functions", [], () => {
+addTestGroup("Builtin functions", [pl2.builtins], () => {
 	addTest("print", r => {
 		const result = pl2.interpretCode(`
 			print(1 + 1)
@@ -411,36 +429,31 @@ addTestGroup("Builtin functions", [], () => {
 		testEqual(r, result.logs[0].text, "2");
 	});
 
-	const tests = [
-		{ name: "max 1", expr: "x = math_max(1, 2)",    expected: pl2.newNumber(2) },
-		{ name: "max 2", expr: "x = math_max(2, 1)",    expected: pl2.newNumber(2) },
-		{ name: "max 3", expr: "x = math_max(0, 1, 3)", expected: pl2.newNumber(3) },
-		{ name: "max 4", expr: "x = math_max()",        expected: pl2.newNumber(-Infinity) },
+	addAllTestCases([
+		{ name: "max 1", code: "x = max(1, 2)",    expected: pl2.newNumber(2) },
+		{ name: "max 2", code: "x = max(2, 1)",    expected: pl2.newNumber(2) },
+		{ name: "max 3", code: "x = max(0, 1, 3)", expected: pl2.newNumber(3) },
+		{ name: "max 4", code: "x = max()",        expected: pl2.newNumber(-Infinity) },
 
-		{ name: "min 1", expr: "x = math_min(1, 2)",    expected: pl2.newNumber(1) },
-		{ name: "min 2", expr: "x = math_min(2, 1)",    expected: pl2.newNumber(1) },
-		{ name: "min 3", expr: "x = math_min(0, 1, 3)", expected: pl2.newNumber(0) },
-		{ name: "min 4", expr: "x = math_min()",        expected: pl2.newNumber(Infinity) },
+		{ name: "min 1", code: "x = min(1, 2)",    expected: pl2.newNumber(1) },
+		{ name: "min 2", code: "x = min(2, 1)",    expected: pl2.newNumber(1) },
+		{ name: "min 3", code: "x = min(0, 1, 3)", expected: pl2.newNumber(0) },
+		{ name: "min 4", code: "x = min()",        expected: pl2.newNumber(Infinity) },
 		
-		{ name: "clamp 1", expr: "x = math_clamp(0.5, 0, 1)", expected: pl2.newNumber(0.5) },
-		{ name: "clamp 2", expr: "x = math_clamp(-2, 0, 1)",  expected: pl2.newNumber(0) },
-		{ name: "clamp 3", expr: "x = math_clamp(2, 0, 1)",   expected: pl2.newNumber(1) },
+		{ name: "clamp 1", code: "x = clamp(0.5, 0, 1)", expected: pl2.newNumber(0.5) },
+		{ name: "clamp 2", code: "x = clamp(-2, 0, 1)",  expected: pl2.newNumber(0) },
+		{ name: "clamp 3", code: "x = clamp(2, 0, 1)",   expected: pl2.newNumber(1) },
 
-		{ name: "sin 1", expr: "x = math_sin(0)",   expected: pl2.newNumber(0) },
-		{ name: "cos 1", expr: "x = math_cos(0)",   expected: pl2.newNumber(1) },
+		{ name: "sin 1", code: "x = sin(0)",   expected: pl2.newNumber(0) },
+		{ name: "cos 1", code: "x = cos(0)",   expected: pl2.newNumber(1) },
 
-		{ name: "len string", expr: `x = len("abc")`,   expected: pl2.newNumber(3) },
-	];
+		{ name: "len string", code: `x = len("abc")`,   expected: pl2.newNumber(3) },
 
-	for (const test of tests) {
-		addTest("math functions - " + test.name, r => {
-			const result = pl2.interpretCode(test.expr);
+		{ name: "matrix mul",       code: `x = mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2.Result_Vector, val: [3, 7] } },
+		{ name: "matrix transpose", code: `x = transpose(mat<2, 2>{1, 2, 3, 4})`,      expected: { type: pl2.Result_Matrix, val: { rows: 2, cols: 2, data: [1, 3, 2, 4] } } },
 
-			const [val, err] = pl2.evaluateCode("x", result);
-			testEqual(r, err, undefined, test.name);
-			testEqualResult(r, val, test.expected, test.name);
-		});
-	}
+		{ name: "push", program: "x = list{}; push(x, 1)", code: "x", expected: { type: pl2.Result_List, val: [ pl2.newNumber(1) ] } }, 
+	])
 });
 
 addTestGroup("If statements", [], () => {
@@ -780,9 +793,9 @@ addTestGroup("Indexing", [], () => {
 
 			testEqual(r, result.lastResult.error, undefined);
 
-			// const [x1, err1] = pl2.evaluateCode(`x[1]`, result)
+			// const [x1, err1] = evaluateCode(`x[1]`, result)
 			// testEqual(r, err1, undefined);
-			// testEqualResult(r, x1, pl2.newNumber(1));
+			// testEqualResult(r, x1, newNumber(1));
 
 			const [x2, err2] = pl2.evaluateCode(`x[2]`, result)
 			testEqual(r, err2, undefined);
@@ -800,6 +813,23 @@ addTestGroup("Indexing", [], () => {
 			testEqualLogs(r, result, [
 				"vec[1, 2, 3]",
 			]);
+		});
+
+		addTest("Vectors to have copy semantics", r => {
+			const result = pl2.interpretCode(`
+				v = vec{1, 2, 3}
+
+				v2 = v
+				v2[0] = 4; v2[1] = 4; v2[2] = 4
+			`);
+
+			const v = result.scopes[0].vars.get("v");
+			testAssert(r, !!v);
+			testEqualResult(r, v, { type: pl2.Result_Vector, val: [1, 2, 3] });
+
+			const v2 = result.scopes[0].vars.get("v2");
+			testAssert(r, !!v2);
+			testEqualResult(r, v2, { type: pl2.Result_Vector, val: [4, 4, 4] });
 		});
 	});
 
@@ -840,10 +870,166 @@ addTestGroup("Indexing", [], () => {
 ]`,
 			]);
 		});
+
+		addTestGroup("Get value from a matrix", [], () => {
+			const cases: { name: string; case: string; expected?: pl2.Result; err?: boolean; }[] = [
+				{ name: "m[0]", case: "m[0]", expected: { type: pl2.Result_Vector, val: [2, 0, 0] } },
+				{ name: "m[1]", case: "m[1]", expected: { type: pl2.Result_Vector, val: [0, 2, 0] } },
+				{ name: "m[2]", case: "m[2]", expected: { type: pl2.Result_Vector, val: [0, 0, 2] } },
+				{ name: "m[3]", case: "m[3]", expected: { type: pl2.Result_Vector, val: [0, 0, 0] } },
+				{ name: "m[4]", case: "m[4]", err: true, },
+
+				{ name: "m[0, 0]", case: "m[0, 0]", expected: pl2.newNumber(2) },
+				{ name: "m[0, 1]", case: "m[0, 1]", expected: pl2.newNumber(0) },
+				{ name: "m[0, 2]", case: "m[0, 2]", expected: pl2.newNumber(0) },
+				{ name: "m[0, 3]", case: "m[0, 3]", expected: pl2.newNumber(0) },
+				{ name: "m[0, 4]", case: "m[0, 4]", err: true },
+
+				{ name: "m[1, 0]", case: "m[1, 0]", expected: pl2.newNumber(0) },
+				{ name: "m[1, 1]", case: "m[1, 1]", expected: pl2.newNumber(2) },
+				{ name: "m[1, 2]", case: "m[1, 2]", expected: pl2.newNumber(0) },
+				{ name: "m[1, 3]", case: "m[1, 3]", expected: pl2.newNumber(0) },
+				{ name: "m[1, 4]", case: "m[1, 4]", err: true },
+
+				{ name: "m[2, 0]", case: "m[2, 0]", expected: pl2.newNumber(0) },
+				{ name: "m[2, 1]", case: "m[2, 1]", expected: pl2.newNumber(0) },
+				{ name: "m[2, 2]", case: "m[2, 2]", expected: pl2.newNumber(2) },
+				{ name: "m[2, 3]", case: "m[2, 3]", expected: pl2.newNumber(0) },
+				{ name: "m[2, 4]", case: "m[2, 4]", err: true },
+
+				{ name: "m[3, 0]", case: "m[3, 0]", err: true, },
+				{ name: "m[3, 1]", case: "m[3, 1]", err: true, },
+				{ name: "m[3, 2]", case: "m[3, 2]", err: true, },
+				{ name: "m[3, 3]", case: "m[3, 3]", err: true, },
+				{ name: "m[3, 4]", case: "m[3, 4]", err: true, },
+			];
+
+			for (const testCase of cases) {
+				addTest(testCase.name, r => {
+					const result = pl2.interpretCode(`m = mat<3, 4>{2}`);
+					testNoErrors(r, result);
+					const [r1, r1Err] = pl2.evaluateCode(testCase.case, result);
+
+					if (testCase.err) {
+						test(r, !!r1Err);
+					} else if (testCase.expected) {
+						testEqual(r, r1Err, undefined);
+						testEqualResult(r, r1, testCase.expected);
+					} else {
+						throw new Error("need err or expected");
+					}
+				});
+			}
+		});
+
+		addTest("Set value into a matrix", r => {
+			const result = pl2.interpretCode(`
+				m = mat<3, 4>{1}
+
+				m[1]  = vec{10, 10, 10}
+				part1 = m
+
+				m[2]  = vec{20, 20, 20}
+				part2 = m
+
+				m[3]  = vec{30, 30, 30}
+				part3 = m
+
+				m[4]  = vec{40, 40, 40}
+				part4 = m
+			`);
+
+			testEqualError(r, result, "Index [4] out-of-bounds (4 cols)");
+
+			const part1 = result.scopes[0].vars.get("part1");
+			testAssert(r, part1?.type === pl2.Result_Matrix);
+			testEqualResult(r, part1, {
+				type: pl2.Result_Matrix,
+				val: {
+					rows: 3, cols: 4,
+					data: [
+						1, 10, 0, 0,
+						0, 10, 0, 0,
+						0, 10, 1, 0,
+					]
+				}
+			})
+
+			const part2 = result.scopes[0].vars.get("part2");
+			testAssert(r, part2?.type === pl2.Result_Matrix);
+			testEqualResult(r, part2, {
+				type: pl2.Result_Matrix,
+				val: {
+					rows: 3, cols: 4,
+					data: [
+						1, 10, 20, 0,
+						0, 10, 20, 0,
+						0, 10, 20, 0,
+					]
+				}
+			})
+
+			const part3 = result.scopes[0].vars.get("part3");
+			testAssert(r, part3?.type === pl2.Result_Matrix);
+			testEqualResult(r, part3, {
+				type: pl2.Result_Matrix,
+				val: {
+					rows: 3, cols: 4,
+					data: [
+						1, 10, 20, 30,
+						0, 10, 20, 30,
+						0, 10, 20, 30,
+					]
+				}
+			})
+
+			testEqual(r, result.lastResult.error?.message, "Index [4] out-of-bounds (4 cols)");
+		});
+
+		addTest("Matrix to have copy semantics - mutating m2 should not mutate m", r => {
+			const result = pl2.interpretCode(`
+				m = mat<3, 4>{1}
+
+				m2 = m
+				m2[0, 0] = 2
+				m2[1, 1] = 3
+				m2[2, 2] = 4
+			`);
+
+			const m = result.scopes[0].vars.get("m");
+			testAssert(r, !!m);
+			testEqualResult(r, m, {
+				type: pl2.Result_Matrix,
+				val: {
+					rows: 3,
+					cols: 4,
+					data: [
+						1, 0, 0, 0,
+						0, 1, 0, 0,
+						0, 0, 1, 0,
+					],
+				}
+			});
+
+			const m2 = result.scopes[0].vars.get("m2");
+			testAssert(r, !!m2);
+			testEqualResult(r, m2, {
+				type: pl2.Result_Matrix,
+				val: {
+					rows: 3,
+					cols: 4,
+					data: [
+						2, 0, 0, 0,
+						0, 3, 0, 0,
+						0, 0, 4, 0,
+					],
+				}
+			});
+		})
 	});
 });
 
-addTestGroup("Control flow", [], () => {
+addTestGroup("Control 2low", [], () => {
 	addTest("return top level", r => {
 		const result = pl2.interpretCode(`
 			print(1)

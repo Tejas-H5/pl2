@@ -32,7 +32,7 @@ addTestGroup("Parsing identifiers", [ast.parseIdentifier], () => {
 	});
 });
 
-addTestGroup("Operator parsing", [ast.parseOperator], () => {
+addTestGroup("Operator parsing", [ast.parseBinaryOperator, ast.parseUnaryOperator], () => {
 	addTest("Normal", r => {
 		const expr = ast.parseExpressionFromText(`x = y`);
 		testAssert(r, !!expr, "!!expr");
@@ -68,7 +68,7 @@ addTestGroup("Operator parsing", [ast.parseOperator], () => {
 
 	addTest("Invalid operator", r => {
 		const parser = newParser("x")
-		const result = ast.parseOperator(parser);
+		const result = ast.parseBinaryOperator(parser);
 		testEqual(r, result, undefined);
 	});
 })
@@ -284,6 +284,67 @@ addTestGroup("Binary expressions", [ast.parseExpression, ast.parseBinaryExpressi
 			test(r, isIdentifier(expr.rhs.target.indexes[0], "i"));
 			test(r, isIdentifier(expr.rhs.indexes[0], "j"));
 		});
+
+
+		addTest("Assignment", r => {
+			const expr = ast.parseExpressionFromText("m[1] = vec{10, 10, 10}");
+			testAssert(r, !!expr);
+
+			testAssert(r, expr.type === ast.Expression_BinaryExpression);
+			testAssert(r, expr.lhs.type === ast.Expression_Indexer);
+			testEqual(r, expr.lhs.indexes.length, 1);
+			testAssert(r, expr.rhs.type === ast.Expression_TypeInitializer);
+		});
+	});
+});
+
+addTestGroup("Unary expressions", [ast.parseExpression, ast.parseUnaryOperator], () => {
+	addTest("Normal case", r => {
+		const expr = ast.parseExpressionFromText("!1");
+		testAssert(r, !!expr);
+
+		testAssert(r, expr.type === ast.Expression_UnaryExpression);
+		testAssert(r, expr.expr.type === ast.Expression_NumberLiteral);
+	});
+
+	addTest("Double", r => {
+		const expr = ast.parseExpressionFromText("!!1");
+		testAssert(r, !!expr);
+
+		testAssert(r, expr.type === ast.Expression_UnaryExpression);
+		testAssert(r, expr.expr.type === ast.Expression_UnaryExpression);
+		testAssert(r, expr.expr.expr.type === ast.Expression_NumberLiteral);
+	});
+
+	addTest("Inside bin expression rhs", r => {
+		const expr = ast.parseExpressionFromText("a * !2");
+		testAssert(r, !!expr);
+
+		testAssert(r, expr.type === ast.Expression_BinaryExpression);
+		testAssert(r, expr.rhs.type === ast.Expression_UnaryExpression);
+	});
+
+	addTest("Inside bin expression lhs", r => {
+		const expr = ast.parseExpressionFromText("!a * 2");
+		testAssert(r, !!expr);
+
+		testAssert(r, expr.type === ast.Expression_BinaryExpression);
+		testAssert(r, expr.lhs.type === ast.Expression_UnaryExpression);
+	});
+
+	addTest("With indexing", r => {
+		const expr = ast.parseExpressionFromText("!2[0]");
+		testAssert(r, !!expr);
+		testAssert(r, expr.type === ast.Expression_UnaryExpression);
+		testAssert(r, expr.expr.type === ast.Expression_Indexer);
+	});
+
+	addTest("With if statement", r => {
+		const expr = ast.parseExpressionFromText("if !(x == 1) {}");
+		testAssert(r, !!expr);
+		testAssert(r, expr.type === ast.Expression_IfChain);
+		testAssert(r, expr.blocks[0].check.type === ast.Expression_UnaryExpression);
+		testAssert(r, expr.blocks[0].check.expr.type === ast.Expression_BinaryExpression);
 	});
 });
 
