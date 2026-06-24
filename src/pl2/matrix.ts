@@ -1,3 +1,6 @@
+import { assert } from "./assert";
+import * as vector from "./vector";
+
 export type Matrix = {
 	data: number[];
 	rows: number;
@@ -26,13 +29,23 @@ export function getIndex(mat: Matrix, row: number, col: number): number {
 	return row * mat.cols + col;
 }
 
-export function setAxis(mat: Matrix, vec: number[], col: number) {
+export function get(mat: Matrix, row: number, col: number): number {
+	return mat.data[getIndex(mat, row, col)] ?? 0;
+}
+
+export function set(mat: Matrix, row: number, col: number, val: number) {
+	const idx = getIndex(mat, row, col);
+	if (idx < mat.data.length) {
+		mat.data[idx] = val;
+	}
+}
+
+export function setAxis(mat: Matrix, col: number, vec: vector.Vec) {
 	for (let i = 0; i < vec.length; i++) {
 		const idx = getIndex(mat, i, col);
 		mat.data[idx] = vec[i];
 	}
 }
-
 
 export function mulVec(m: Matrix, vec: number[], result: number[]): string | undefined {
 	if (m.cols !== vec.length) {
@@ -78,13 +91,43 @@ export function mulMatrix(m1: Matrix, m2: Matrix, result: Matrix): string | unde
 	return undefined;
 }
 
+export function setScale(m: Matrix, x: number, y: number, z: number) {
+	m.data.fill(0);
+	set(m, 0, 0, x);
+	set(m, 1, 1, y);
+	set(m, 2, 2, z);
+}
+
+export function setPosTargetUp(m: Matrix, pos: vector.Vec3, target: vector.Vec3, up: vector.Vec3) {
+	m.data.fill(0);
+
+	const result = vector.vec4();
+
+	// Avoiding quaternion like the plage for now. 
+	// TODO: We'll add them later.
+
+	vector.clear(result);
+	vector.add(result, target);
+	vector.sub(result, pos);
+	vector.normalize(result);
+	setAxis(m, 2, result); // forward axis
+
+	// TODO: handle the case when target and up are kinda close.
+	vector.normalize(up);
+	setAxis(m, 1, up);
+
+	vector.cross(result, result, up);
+	setAxis(m, 0, result);
+
+	// Also the camera transform.
+	setAxis(m, 3, pos);
+
+	// I guess we don't need the bottom row of the 4x4 matrix really ...
+}
+
 export function invert(m: Matrix): string | undefined {
 	if (m.rows !== m.cols)                      return "Only square matrices are invertible";
 	if (m.rows !== m.rows || m.cols !== m.cols) return "Destination and original should be the same size";
-
-	for (let i = 0; i < m.data.length; i++) {
-		m.data[i] = m.data[i];
-	}
 
 	switch (m.rows) {
 		case 1: {
@@ -108,7 +151,7 @@ export function invert(m: Matrix): string | undefined {
 			m.data[dIdx] = a / det;
 		} break;
 		case 3: {
-			// TODO: learn abt how this works - ai wrote this
+			// TODO: learn abt how this works - AI wrote this
 
 			const aIdx = getIndex(m, 0, 0); const bIdx = getIndex(m, 0, 1); const cIdx = getIndex(m, 0, 2);
 			const dIdx = getIndex(m, 1, 0); const eIdx = getIndex(m, 1, 1); const fIdx = getIndex(m, 1, 2);
@@ -132,7 +175,7 @@ export function invert(m: Matrix): string | undefined {
 			m.data[6] = C * invDet; m.data[7] = (g * b - a * h) * invDet; m.data[8] = (a * e - d * b) * invDet;
 		} break;
 		case 4: {
-			// TODO: learn abt how this works - ai wrote this too
+			// TODO: learn abt how this works - AI wrote this too
 
 			const d = m.data;
 			const inv = m.data;
@@ -209,6 +252,7 @@ export function invert(m: Matrix): string | undefined {
 			}
 		} break;
 		// TODO: Odin codebase does this with LU decomposition (but we dont care too much about the larger matrices yet though so I haven't bothered adding it yet)
+		// In the previous attempt at this programming language, I did gauss-jordan elimination to invert the matrices I think. Could port that over too.
 		default: return "We dont support inverting a matrix larger than 4, sorry";
 	}
 
@@ -245,3 +289,21 @@ export function clone(mat: Matrix): Matrix {
 	};
 }
 
+export function clear(mat: Matrix) {
+	mat.data.fill(0);
+}
+
+export function setIdentity(mat: Matrix) {
+	mat.data.fill(0);
+	for (let i = 0; i < mat.rows; i++) {
+		set(mat, i, i, 1);
+	}
+}
+
+export function copy(src: Matrix, dst: Matrix) {
+	assert(src.rows === dst.rows);
+	assert(src.cols === dst.cols);
+	for (let i = 0; i < src.data.length; i++) {
+		dst.data[i] = src.data[i];
+	}
+}

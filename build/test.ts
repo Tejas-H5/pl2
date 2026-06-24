@@ -80,5 +80,5 @@ if (config === "watch") {
 } else {
 	await esbuild.build(options);
 
-	console.log("Completed in " + Math.floor(performance.now() - start) + "ms");
+	console.log("Completed in " + Math.floor(performance.now() - start) + "ms (excluding loading nodejs and whatnot)");
 }

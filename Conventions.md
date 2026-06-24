@@ -18,6 +18,12 @@ I don't use AI on personal projects yet, but when I do, it will become useful.
 - Try to avoid royal we
     - What do we mean by we? I meant me. Typing 'we' instead is just a bad habbit, not a convention
 
+- Avoid long lists of imports. If a file imports hundreds of things from another file, then they probably shouldn't have been split into two files in the first place.
+    - Use headings to make the single massive file easier to navigate
+////////////////////////////////////////////////////
+// Heading
+    - Use namespace imports to expose modules with a large number of types and functions
+
 ## Tests
 
 - Use the bespoke test framework

@@ -11,7 +11,8 @@ The main reason is because the last programming language I made, alongside a cus
 extremely difficult to reuse or move into another project where I wanted to use it. So with this one, I want to especially focus on nailing the API
 design and reuse aspects of the code. 
 
-Still not using AI ...
+Still not using AI to write entire parts of the code, but it has been used for some of the tedious stuff, and indicated
+as such in the comments. 
 
 ## High level overview
 

@@ -113,9 +113,9 @@ function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, mes
 }
 
 function testEqualLogs(r: TestResult, result: pl2.ProgramIterator, expected: string[]) {
-	if (!testEqual(r, result.logs.length, expected.length)) {
+	if (!testEqual(r, result.logOutputs.length, expected.length)) {
 		testFailure(r, "Logs: ");
-		for (const log of result.logs) {
+		for (const log of result.logOutputs) {
 			testFailure(r, log.text);
 		}
 		return;
@@ -123,7 +123,7 @@ function testEqualLogs(r: TestResult, result: pl2.ProgramIterator, expected: str
 
 	for (let i = 0; i < expected.length; i++) {
 		const line = expected[i];
-		const got = result.logs[i].text;
+		const got = result.logOutputs[i].text;
 		testEqual(r, got, line, "line " + i);
 	}
 }
@@ -368,6 +368,13 @@ addTestGroup("Binary expressions", [pl2.evaluateBinaryOperation], () => {
 			{ name: ">=", code: `mat<1, 3>{1,2,3}     >= mat<1, 3>{1, 3, 2}`,  expected: { type: pl2.Result_Matrix, val: { rows: 1, cols: 3, data: [1, 0, 1] } } },
 		]);
 	});
+
+	addTestGroup("Vector scalar ops", [pl2.evaluateBinaryOperationOnResults], () => {
+		addAllTestCases([
+			{ name: `*`, code: `2 * vec{1, 2, 3}`, expected: { type: pl2.Result_Vector, val: [2, 4, 6] }, },
+			{ name: `/`, code: `vec{2, 4, 6} / 2`, expected: { type: pl2.Result_Vector, val: [1, 2, 3] }, },
+		]);
+	});
 })
 
 addTestGroup("Unary operations", [pl2.evaluateUnaryOperation], () => {
@@ -425,8 +432,8 @@ addTestGroup("Builtin functions", [pl2.builtins], () => {
 			print(1 + 1)
 		`);
 
-		testEqual(r, result.logs.length, 1);
-		testEqual(r, result.logs[0].text, "2");
+		testEqual(r, result.logOutputs.length, 1);
+		testEqual(r, result.logOutputs[0].text, "2");
 	});
 
 	addAllTestCases([
@@ -450,7 +457,7 @@ addTestGroup("Builtin functions", [pl2.builtins], () => {
 		{ name: "len string", code: `x = len("abc")`,   expected: pl2.newNumber(3) },
 
 		{ name: "matrix mul",       code: `x = mul(mat<2, 2>{1, 2, 3, 4}, vec{1, 1})`, expected: { type: pl2.Result_Vector, val: [3, 7] } },
-		{ name: "matrix transpose", code: `x = transpose(mat<2, 2>{1, 2, 3, 4})`,      expected: { type: pl2.Result_Matrix, val: { rows: 2, cols: 2, data: [1, 3, 2, 4] } } },
+		{ name: "matrix transpose", code: `x = matrix_transpose(mat<2, 2>{1, 2, 3, 4})`,      expected: { type: pl2.Result_Matrix, val: { rows: 2, cols: 2, data: [1, 3, 2, 4] } } },
 
 		{ name: "push", program: "x = list{}; push(x, 1)", code: "x", expected: { type: pl2.Result_List, val: [ pl2.newNumber(1) ] } }, 
 	])
