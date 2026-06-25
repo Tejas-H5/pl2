@@ -1,3 +1,4 @@
+// @ts-expect-error trust me bro
 import { printResults, runAllTests } from "src/testing/testing";
 // @ts-expect-error trust me bro
 ALL_TESTS

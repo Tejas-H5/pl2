@@ -3,7 +3,7 @@ import { pl2, ast } from "./pl2";
 
 function imApp(c: ImCache) {
 	if (im.isFirstishRender(c)) {
-		imdom.setStyle(c, "fontFamily", "arial")
+		imdom.setStyle(c, "fontFamily", "InterVariable")
 	}
 }
 

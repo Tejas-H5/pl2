@@ -22,4 +22,5 @@
     "strict": true,
     "noFallthroughCasesInSwitch": true
   },
+  "exclude": ["./build"]
 }
