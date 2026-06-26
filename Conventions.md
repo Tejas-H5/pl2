@@ -5,6 +5,8 @@ I don't use AI on personal projects yet, but when I do, it will become useful.
 
 ## Programming
 
+- The final output must be a single HTML file that can be downloaded and ran offline. 
+    - Assets, like images, fonts, styles, small audio effects, and worker scripts must all be embedded into the page rather than linked to.
 - Only functions and data. Don't be too fancy. Prefer non-capturing closures where possible. Just don't use a `class` ever.
     - Code becomes more consistent, easier to reason about, and we avoid circular dependency problem you get with dependency injection patterns.
     - Plain objects are far easier to consistently serialize and de-serialize than classes
@@ -30,3 +32,17 @@ I don't use AI on personal projects yet, but when I do, it will become useful.
 - All tests must be against the highest level of abstraction possible. Test `parseExpression` instead of testing `parseNumberLiteral` directly, for example.
 - All tests must complete in less than 1 second, considering the relative simplicity of this project.
 - Add new tests for every bug we are fixing
+
+## Dependencies
+
+I'm using a different approach to dependencies than from my previous projects.
+It's more complicated, but hopefully it pays off. 
+
+- All peer-dependencies must be imported with absolute paths.
+- All self-contained dependencies must import their files with relative imports, such that I can copy-paste their folder
+    to another project with 0 changes. 
+    - Peer-deps must be imported with absolute paths, so that I can simply copy-paste the peer dependencies
+- npm-install should only be used for dev-dependencies or complicated code we don't care to write
+    - dev tools, bundlers, linters, transpilers are here
+    - fast fourier transform, matrix math, crypto algorithms, indexeddb wrappers
+        - except I am one of these people that does want to code these myself so I am ignoring this advice knowingly

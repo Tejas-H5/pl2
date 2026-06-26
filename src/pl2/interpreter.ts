@@ -3,6 +3,7 @@ import * as ast from "./ast";
 import * as matrix from "./matrix";
 import * as vector from "./vector";
 import { newParser } from "./parser";
+import { TextPosition } from "./text-pos";
 
 ////////////////////////////////////////////////////
 // Types
@@ -136,8 +137,16 @@ export function cloneResultIfValueSemantics(src: Result): Result {
 	}
 }
 
+type ProgramError = {
+	expr: ast.Expression | undefined;
+	pos:  TextPosition;
+	message: string;
+};
+
 export type ProgramIterator = {
-	program:          ast.Program;
+	program: ast.Program;
+	errors:  ProgramError[];
+
 	nextStatementIdx: number;
 
 	stack:  ast.Expression[];
@@ -281,6 +290,8 @@ export const SCOPE_NON_ISOLATED_FLAGS = SCOPE_ALLOW_CONTINUE_BREAK;
 export function newProgramIterator(program: ast.Program): ProgramIterator {
 	return {
 		program: program,
+		errors:  [],
+
 		nextStatementIdx: 0,
 		lastResult: {
 			result: NOTHING,
@@ -427,9 +438,7 @@ export type ExprReturn =
 ////////////////////////////////////////////////////
 // Main functionality
 
-export function interpretProgram(program: ast.Program): ProgramIterator {
-	const iter = newProgramIterator(program);
-
+export function interpretProgram(program: ast.Program, iter: ProgramIterator) {
 	// The root scope will never get popped.
 	pushScope(iter, 0); 
 
@@ -446,7 +455,30 @@ export function interpretProgram(program: ast.Program): ProgramIterator {
 export function interpretCode(code: string): ProgramIterator {
 	const parser = newParser(code);
 	const program = ast.parseProgram(parser);
-	const result = interpretProgram(program);
+
+	const result = newProgramIterator(program);
+
+	if (parser.errors.length > 0) {
+		for (const err of parser.errors) {
+			result.errors.push({
+				pos:     err.pos,
+				message: err.message,
+				expr:    undefined,
+			});
+		}
+		return result;
+	} 
+
+	interpretProgram(program, result);
+
+	if (result.lastResult.error) {
+		result.errors.push({
+			expr:    result.lastResult.error.expr,
+			pos:     result.lastResult.error.expr.start,
+			message: result.lastResult.error.message,
+		});
+	}
+
 	return result;
 }
 
@@ -1291,7 +1323,7 @@ function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterato
 					!arg.op.assignment || 
 					arg.op.type !== ast.OP_NONE
 				) {
-					return setError(iter, arg, "Maps should be initialized like { key=value, key=value, etc. }");
+					return setError(iter, expr, "Maps should be initialized like { key=value, key=value, etc. }");
 				} 
 
 				const key = evaluateExpressionValue(arg.lhs, iter);

@@ -1,7 +1,6 @@
 // imui v0.00.4
 
-import { im, ImCache } from '../im-core';
-import { imdom, el } from '../im-dom';
+import { imdom, el, im, ImCache } from '/im-js';
 
 
 ///////////////////////////
@@ -293,16 +292,16 @@ export type DisplayTypeInstance = number & { __displayType: void; };
  *      imStr(c, "World"); 
  *  } imLayoutEnd(c);
  */
-export const BLOCK = 1 as DisplayTypeInstance;
+export const BLOCK        = 1 as DisplayTypeInstance;
 export const INLINE_BLOCK = 2 as DisplayTypeInstance;
-export const INLINE = 3 as DisplayTypeInstance;
-export const ROW = 4 as DisplayTypeInstance;
-export const ROW_REVERSE = 5 as DisplayTypeInstance;
-export const COL = 6 as DisplayTypeInstance;
-export const COL_REVERSE = 7 as DisplayTypeInstance;
+export const INLINE       = 3 as DisplayTypeInstance;
+export const ROW          = 4 as DisplayTypeInstance;
+export const ROW_REVERSE  = 5 as DisplayTypeInstance;
+export const COL          = 6 as DisplayTypeInstance;
+export const COL_REVERSE  = 7 as DisplayTypeInstance;
 // No more TABLE, TABLE_ROW, TABLE_CELL. Use display: grid + grid-template-columns
-export const INLINE_ROW = 11 as DisplayTypeInstance;
-export const INLINE_COL = 12 as DisplayTypeInstance;
+export const INLINE_ROW   = 11 as DisplayTypeInstance;
+export const INLINE_COL   = 12 as DisplayTypeInstance;
 
 export type DisplayType 
     = typeof BLOCK 

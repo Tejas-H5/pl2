@@ -1,4 +1,4 @@
-// IM-DOM 1.73
+// IM-DOM 1.74
 
 import { assert } from "./assert";
 import { im, ImCache, ImCacheEntries } from "./im-core";
@@ -174,20 +174,20 @@ function GraphMappingsEditorView(c: im.Cache) {
         if (elHasMousePress(c)) useDiv1 = !useDiv1;
     } LayoutEnd(c);
 
-    LayoutBegin(c, COL); imFlex(c); {
+    LayoutBegin(c, COL); imui.Flex(c); {
         let div1, div2
-        LayoutBegin(c, ROW); imFlex(c); {
-            LayoutBegin(c, COL); imFlex(c); {
+        LayoutBegin(c, ROW); imui.Flex(c); {
+            LayoutBegin(c, COL); imui.Flex(c); {
                 Str(c, "Div 1");
 
-                div1 = LayoutBeginInternal(c, COL); imFinalizeDeferred(c); imLayoutEnd(c);
+                div1 = LayoutBeginInternal(c, COL); imFinalizeDeferred(c); imui.End(c);
 
                 Str(c, "Div 1 end");
             } LayoutEnd(c);
-            LayoutBegin(c, COL); imFlex(c); {
+            LayoutBegin(c, COL); imui.Flex(c); {
                 Str(c, "Div 2");
 
-                div2 = LayoutBeginInternal(c, COL); imFinalizeDeferred(c); imLayoutEnd(c);
+                div2 = LayoutBeginInternal(c, COL); imFinalizeDeferred(c); imui.End(c);
 
                 Str(c, "Div 2 end");
             } LayoutEnd(c);
@@ -237,6 +237,8 @@ function finalizeDomAppender(a: DomAppender<ValidElement>) {
 
 
 /**
+ * See {@link el} to get a stable KeyRef. It should be easy enough to make your own if the element type you want isn't in there.
+ *
  * NOTE: SVG elements are actually different from normal HTML elements, and 
  * will need to be created wtih {@link imElSvgBegin}
  */
@@ -484,6 +486,19 @@ function setStyle<K extends (keyof ValidElement["style"])>(
     root.style[key] = value;
 }
 
+function setStyleProperty(
+    c: ImCache,
+    key: string,
+    value: string,
+    root = getElement(c),
+) {
+    if (!value) {
+        root.style.removeProperty(key);
+    } else {
+        root.style.setProperty(key, value);
+    }
+}
+
 function setTextUnsafe(c: ImCache, val: string) {
     let el = getElement(c);
     el.textContent = val;
@@ -526,8 +541,10 @@ function getElement(c: ImCache) {
     return getAppender(c).root;
 }
 
-// NOTE: you should only use this if you don't already have some form of global event handling set up,
-// or in cases where you can't use global event handling.
+/** 
+ * See {@link ev} - you'll most-likely want to use this to get a stable keyRef. 
+ * It's pretty easy to make your own if the event you want isn't in there though 
+ */
 function imOn<K extends keyof HTMLElementEventMap>(
     c: ImCache,
     type: KeyRef<K>,
@@ -1291,8 +1308,6 @@ function isLetterHeld(keysState: KeyboardState, letter: string): boolean {
     return false;
 }
 
-
-
 /** HTML elements */
 export const el = {
     A: { val: "a" },
@@ -1701,6 +1716,7 @@ export const imdom = {
 
     /** Setting properties on DOM node */
     setStyle,
+    setStyleProperty,
     setClass,
     setAttr,
     setTextUnsafe, // Don't call this on an element that has non-text children! You'll delete them.

@@ -4,6 +4,27 @@ import { advanceTextPosition, assignTextPosition, cloneTextPosition, TextPositio
 export type Parser = {
 	text: string;
 	pos:  TextPosition;
+	errors: ParseError[];
+}
+
+type ParseError = {
+	message: string;
+	pos:     TextPosition;
+};
+
+export function reportParserError(parser: Parser, error: string) {
+	parser.errors.push({
+		message: error,
+		pos:     parserPos(parser),
+	});
+}
+
+export function getNumErrors(parser: Parser): number {
+	return parser.errors.length;
+}
+
+export function hasNewErrors(parser: Parser, prevNumErrors: number): boolean {
+	return getNumErrors(parser) > prevNumErrors;
 }
 
 export function newParser(code: string): Parser {
@@ -15,6 +36,7 @@ export function newParser(code: string): Parser {
 			col:  0,
 			tabs: 0,
 		},
+		errors: [],
 	};
 }
 

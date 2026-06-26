@@ -8,12 +8,12 @@ import {
 	testDeepEqual,
 	testEqual,
 	TestResult
-} from "src/testing/testing";
-import { assertNever } from "./assert";
+} from "/testing/testing";
+import { assertNever } from "/assert";
 import { expressionToString } from "./ast";
 import * as pl2 from "./interpreter";
 
-setCurrentTestFile("src/interpreter.test.ts", pl2.interpretProgram);
+setCurrentTestFile("pl2/interpreter.test.ts", pl2.interpretProgram);
 
 type TestCase = {
 	name: string;

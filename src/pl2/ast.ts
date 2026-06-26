@@ -7,10 +7,13 @@ import {
 	compareCurrentWithWordBoundary,
 	currentChar,
 	newParser,
+	getNumErrors,
 	Parser,
 	parserPos,
 	reachedEnd,
-    reset
+    reportParserError,
+    reset,
+    hasNewErrors
 } from "./parser";
 import { isDigit, isLetter, isWhitespace } from "./string-utils";
 import { TextPosition } from "./text-pos";
@@ -426,23 +429,27 @@ export function parseUnaryOperator(parser: Parser): UnaryOperator | undefined {
 }
 
 export function parseGroup(parser: Parser): Expression | undefined {
+	const numErrors = getNumErrors(parser);
+
 	if (currentChar(parser) !== "(") return;
 
 	if (!advance(parser)) return;
 
 	const expr = parseExpression(parser);
 	if (!expr) {
-		// TODO: report error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected an expression here");
+		}
 		return undefined;
 	}
 
 	parseWhitespace(parser);
-	if (currentChar(parser) !== ")") {
-		// TODO: report error - expected closing brace here. i
+	if (!compareAndAdvance(parser, ")")) {
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected closing brace here");
+		}
 		// return what we have anyway
 	}
-
-	advance(parser);
 
 	return expr;
 }
@@ -454,9 +461,13 @@ function compareAndAdvance(parser: Parser, keyword: string): boolean {
 }
 
 function parseCodeBlock(parser: Parser, pastFirstCurlyBrace = false): Expression[] | undefined {
+	const numErrors = getNumErrors(parser);
+
 	if (!pastFirstCurlyBrace) {
 		if (currentChar(parser) !== "{") {
-			// TODO: report error 
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected a { here");
+			}
 			return undefined;
 		}
 		advance(parser);
@@ -478,7 +489,9 @@ function parseCodeBlock(parser: Parser, pastFirstCurlyBrace = false): Expression
 	}
 
 	if (!foundBlockEnd) {
-		// Report error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected a } to close this block");
+		}
 		return;
 	}
 
@@ -491,6 +504,8 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 	if (!compareAndAdvance(parser, "if")) return;
 	parseWhitespace(parser);
 
+	const numErrors = getNumErrors(parser);
+
 	const start = parserPos(parser);
 	const blocks: { check: Expression; block: Expression[]; }[] = [];
 	let elseItems: Expression[] | undefined;
@@ -498,7 +513,9 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 	while (true) {
 		const check = parseExpression(parser);
 		if (!check) {
-			// TODO: error - expected check
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected an if-check boolean expression here");
+			}
 			return undefined;
 		}
 
@@ -506,7 +523,9 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 
 		const block = parseCodeBlock(parser);
 		if (!block) {
-			// TODO: Wrap the error?
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected an if { ... } block here");
+			}
 			return undefined;
 		}
 		blocks.push({ check, block });
@@ -523,7 +542,9 @@ export function parseIfChain(parser: Parser): IfChain | undefined {
 			
 			const elseBlock = parseCodeBlock(parser);
 			if (!elseBlock) {
-				// TODO: wrap error
+				if (!hasNewErrors(parser, numErrors)) {
+					reportParserError(parser, "Expected an } else { ... } block here");
+				}
 				break;
 			}
 
@@ -547,13 +568,17 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 
 	if (!compareAndAdvance(parser, "for")) return;
 
+	const numErrors = getNumErrors(parser);
+
 	const varNames: Identifier[] = [];
 
 	while (true) {
 		parseWhitespace(parser)
 		const varName = parseIdentifier(parser);
 		if (!varName) {
-			// TODO: error here
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected an identifier here for a for-loop variable");
+			}
 			return undefined;
 		}
 
@@ -567,12 +592,9 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 
 		parseWhitespace(parser)
 		if (!compareAndAdvance(parser, ",")) {
-			// TODO: error here
-			return undefined;
-		}
-
-		if (!varName) {
-			// TODO: error
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected 'in', or a , here");
+			}
 			return undefined;
 		}
 	}
@@ -580,7 +602,9 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 	parseWhitespace(parser);
 	let lowOrIterator = parseExpression(parser);
 	if (!lowOrIterator) {
-		// TODO: error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected an expression for an iterable object or a range like a..<b here");
+		}
 		return undefined;
 	}
 
@@ -597,7 +621,9 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 
 	const block = parseCodeBlock(parser);
 	if (!block) {
-		// TODO: error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected a body code block for this for-loop");
+		}
 		return undefined;
 	}
 
@@ -612,6 +638,8 @@ export function parseForLoop(parser: Parser): ForLoop | undefined {
 }
 
 function parseForLoopRange(parser: Parser, lo: Expression): ForLoopRange | undefined {
+	const numErrors = getNumErrors(parser);
+
 	let rangeType: ForLoopRangeType;
 	if (compareAndAdvance(parser, "..<=")) {
 		rangeType = RANGE_LTE;
@@ -630,7 +658,9 @@ function parseForLoopRange(parser: Parser, lo: Expression): ForLoopRange | undef
 
 	const hi = parseExpression(parser);
 	if (!hi) {
-		// TODO: error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected an expression for the upper bound of this range");
+		}
 		return undefined;
 	}
 
@@ -707,11 +737,15 @@ export function parseSingularExpressionInternal(parser: Parser): Expression | un
 export function parseSingularExpression(parser: Parser): Expression | undefined {
 	const pos = parserPos(parser);
 
+	const numErrors = getNumErrors(parser);
+
 	const unaryOp = parseUnaryOperator(parser);
 	if (unaryOp !== undefined) {
 		const expr = parseSingularExpression(parser);
 		if (!expr) {
-			// TODO: error
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected an expression for the upper bound of this range");
+			}
 			return undefined;
 		}
 
@@ -740,14 +774,19 @@ export function parseSingularExpression(parser: Parser): Expression | undefined 
 }
 
 export function parseReturnStatementInternal(parser: Parser): ReturnStatement | undefined {
+	const numErrors = getNumErrors(parser);
+
 	parseWhitespace(parser);
 
 	const pos = parserPos(parser);
 
 	const expr = parseExpression(parser);
 	if (!expr) {
-		// TODO: error here
-		return undefined
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected an expression to return here");
+		}
+
+		return undefined;
 	}
 
 	parseWhitespace(parser);
@@ -788,13 +827,15 @@ export function parseAnyReturnStatement(parser: Parser): ReturnStatement | Retur
 export function parseBinaryExpression(parser: Parser, lhs: Expression, level: number, op: BinaryOperator | undefined): BinaryExpression | undefined {
 	let expr: BinaryExpression | undefined;
 
+	const numErrors = getNumErrors(parser);
+
 	while (true) {
 		parseWhitespace(parser);
 
 		if (!op) {
 			op = parseBinaryOperator(parser);
 			if (!op) {
-				// TODO: report expected operator error
+				// No binary operator. Not a big deal.
 				break;
 			}
 		}
@@ -804,7 +845,9 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 		if (!expr) {
 			const rhs = parseSingularExpression(parser);
 			if (!rhs) {
-				// TODO: report expected expression here error
+				if (!hasNewErrors(parser, numErrors)) {
+					reportParserError(parser, "Expected the rhs of a binary expression here");
+				}
 				break;
 			}
 
@@ -834,7 +877,10 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 
 		const rhs = parseSingularExpression(parser);
 		if (!rhs) {
-			// TODO: report expected expression here error
+			if (!hasNewErrors(parser, numErrors)) {
+				// Different log message, so we can tell the two apart, xD
+				reportParserError(parser, "Expected a binary expression's rhs here");
+			}
 			break;
 		}
 
@@ -867,6 +913,8 @@ export function parseExpression(parser: Parser): Expression | undefined {
 }
 
 export function parseIndexerExpression(parser: Parser, expr: Expression): Expression | undefined {
+	const numErrors = getNumErrors(parser);
+
 	// Parses the full chain of indexers. x[0, 0][0][2][2][1]
 	while (true) {
 		if (!compareAndAdvance(parser, "[")) {
@@ -881,7 +929,9 @@ export function parseIndexerExpression(parser: Parser, expr: Expression): Expres
 			parseWhitespace(parser);
 			const indexExpr = parseExpression(parser);
 			if (!indexExpr) {
-				// TODO: error - expected expression here
+				if (!hasNewErrors(parser, numErrors)) {
+					reportParserError(parser, "Expected an expression for an index here");
+				}
 				return undefined;
 			}
 
@@ -893,7 +943,9 @@ export function parseIndexerExpression(parser: Parser, expr: Expression): Expres
 			}
 
 			if (!compareAndAdvance(parser, "]")) {
-				// TODO: error - expected closing bracket here
+				if (!hasNewErrors(parser, numErrors)) {
+					reportParserError(parser, "Expected a closing ] here");
+				}
 				return undefined;
 			}
 
@@ -902,7 +954,9 @@ export function parseIndexerExpression(parser: Parser, expr: Expression): Expres
 		}
 
 		if (!foundEnd) {
-			// TODO: error - expected closing bracket here
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected to eventually find a closing ] ...");
+			}
 			return undefined;
 		}
 
@@ -964,9 +1018,9 @@ export function getOpLevel(op: BinaryOperatorType): number {
 }
 
 export function parseFunctionCall(parser: Parser, functionName: Identifier): FunctionCall | undefined {
-	if (currentChar(parser) !== "(") return;
+	if (!compareAndAdvance(parser, "(")) return;
 
-	if (!advance(parser)) return;
+	const numErrors = getNumErrors(parser);
 
 	const args: Expression[] = [];
 
@@ -981,7 +1035,9 @@ export function parseFunctionCall(parser: Parser, functionName: Identifier): Fun
 
 		const expr = parseExpression(parser);
 		if (!expr) {
-			// TODO: report error
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "expected an expression for this function argument");
+			}
 			return undefined;
 		}
 
@@ -989,7 +1045,9 @@ export function parseFunctionCall(parser: Parser, functionName: Identifier): Fun
 
 		parseWhitespace(parser);
 		if (currentChar(parser) !== "," && currentChar(parser) !== ")") {
-			// TODO: report error - expected comma.
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "expected a , or a closing ) here");
+			}
 			return undefined;
 		}
 
@@ -1000,7 +1058,9 @@ export function parseFunctionCall(parser: Parser, functionName: Identifier): Fun
 	}
 
 	if (!foundClosingParen) {
-		// TODO: report this error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "expected to find a closing ) eventually ...");
+		}
 		return undefined;
 	}
 
@@ -1020,9 +1080,9 @@ export function parseTypeInitializer(
 ): TypeInitializer | undefined {
 	if (currentChar(parser) !== "{") return;
 
-	const pos = parserPos(parser);
-	
 	advance(parser);
+
+	const numErrors = getNumErrors(parser);
 
 	const args: Expression[] = [];
 
@@ -1039,7 +1099,9 @@ export function parseTypeInitializer(
 
 		parseWhitespace(parser);
 		if (currentChar(parser) !== "}") {
-			// TODO: report this error
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "expected to find a closing } here");
+			}
 			return undefined;
 		}
 
@@ -1049,7 +1111,7 @@ export function parseTypeInitializer(
 
 	return {
 		type: Expression_TypeInitializer,
-		start: pos,
+		start: identifier.start,
 		end:   parserPos(parser),
 		typename: identifier,
 		args: args,
@@ -1060,6 +1122,8 @@ export function parseTypeInitializer(
 export function parseTypeArgs(parser: Parser): Expression[] | undefined {
 	if (currentChar(parser) !== "<") return;
 	advance(parser);
+
+	const numErrors = getNumErrors(parser);
 
 	const args: Expression[] = [];
 
@@ -1080,7 +1144,9 @@ export function parseTypeArgs(parser: Parser): Expression[] | undefined {
 
 		parseWhitespace(parser);
 		if (currentChar(parser) !== ">") {
-			// TODO: report this error
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "expected to find a closing > here");
+			}
 			return undefined;
 		}
 
@@ -1250,7 +1316,7 @@ export function parseStringLiteral(parser: Parser): StringLiteral | undefined {
 
     const [val, error] = computeStringForStringLiteral(expressionToString(parser.text, result));
     if (val === undefined) {
-        // TODO: addErrorAtCurrentPosition(parser, error);
+		reportParserError(parser, error);
         return;
     }
 
@@ -1309,6 +1375,8 @@ export function computeStringForStringLiteral(fullText: string): [string | undef
 }
 
 export function parseFunctionDefinition(parser: Parser): FunctionDefinition | undefined {
+	const numErrors = getNumErrors(parser);
+
 	parseWhitespace(parser);
 	const pos = parserPos(parser);
 
@@ -1333,7 +1401,9 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 
 		const ident = parseIdentifier(parser);
 		if (!ident) {
-			// TODO: report error
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "All function arguments should be identifiers");
+			}
 			return undefined;
 		}
 
@@ -1341,7 +1411,9 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 
 		parseWhitespace(parser);
 		if (currentChar(parser) !== "," && currentChar(parser) !== ")") {
-			// TODO: report error - expected comma.
+			if (!hasNewErrors(parser, numErrors)) {
+				reportParserError(parser, "Expected a , or ) here");
+			}
 			return undefined;
 		}
 
@@ -1352,14 +1424,18 @@ export function parseFunctionDefinition(parser: Parser): FunctionDefinition | un
 	}
 
 	if (!foundClosingParen) {
-		// TODO: report error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected a ) here");
+		}
 		return undefined;
 	}
 
 	parseWhitespace(parser);
 	const body = parseCodeBlock(parser);
 	if (!body) {
-		// TODO: report error
+		if (!hasNewErrors(parser, numErrors)) {
+			reportParserError(parser, "Expected a { ... } code block here for this function definition");
+		}
 		return undefined;
 	}
 

@@ -16,7 +16,9 @@ const start = performance.now();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
 const BASE_DIR = path.join(__dirname, "../");
+const SRC_DIR  = path.join(BASE_DIR, "src");
 
 const config = process.argv[2];
 
@@ -27,7 +29,7 @@ const testRunnerTemplate = await fs.readFile(path.join(BASE_DIR, "build", "test-
 
 let entrypoints: string[] = [];
 for await (const file of fs.glob("**/*.test.ts", {
-	cwd: BASE_DIR,
+	cwd: SRC_DIR,
 	exclude: filename => (filename === ".git" || filename === "node_modules")
 })) {
 	entrypoints.push(file);

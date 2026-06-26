@@ -37,8 +37,8 @@ const ENTRYPOINT = path.join(BASE_DIR, "/src/main.ts");
 
 // NOTE: faster-reload is only really noticeable if you have your code and your website open at once.
 // If you use a single-monitor alt-tab setup like me, you won't notice the difference.
-const WORKING_SOURCEMAPS_OR_FASTER_RELOAD = "working-sourcemaps"
-// const WORKING_SOURCEMAPS_OR_FASTER_RELOAD = "faster-reload"
+// const WORKING_SOURCEMAPS_OR_FASTER_RELOAD = "working-sourcemaps"
+const WORKING_SOURCEMAPS_OR_FASTER_RELOAD = "faster-reload"
 
 // It isn't faster for some reason??
 const USE_TSGO = false;
@@ -74,10 +74,9 @@ function logServerUrl() {
 const commonBuildOptions: esbuild.BuildOptions = {
 	entryPoints: [ENTRYPOINT],
 	bundle: true,
-	minify: true,
-	// minifyWhitespace: false,
-	// minifyIdentifiers: false,
-	// minifySyntax: true,
+	minifyWhitespace: false,
+	minifyIdentifiers: false,
+	minifySyntax: true,
 	treeShaking: true,
 	define: Object.fromEntries(
 		Object
