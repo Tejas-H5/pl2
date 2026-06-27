@@ -1,8 +1,8 @@
 import { im, ImCache, imdom } from "im-js";
 import { BLOCK, CENTER, COL, cssVars, imui, ROW } from "im-ui";
 import { ast, pl2 } from "pl2";
-import { imHandleTextAreaEvent, imTextAreaBegin, imTextAreaEnd } from "/im-ui/editable-text-area";
 import {
+	imB,
 	imBegin,
 	imButtonBegin,
 	imButtonEnd,
@@ -14,12 +14,14 @@ import {
 	imFlex,
 	imHeading,
 	imHSpace,
-	imNoWrap,
+	imPreWrap,
 	imStr,
+	imStrFmt,
 	imSubHeading,
 	imVDivider,
 	imVSpace
 } from "ui-primitives";
+import { imHandleTextAreaEvent, imTextAreaBegin, imTextAreaEnd } from "/im-ui/editable-text-area";
 
 const c: ImCache = []
 imMain(c);
@@ -264,7 +266,7 @@ function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
 
 	if (im.If(c) && interpretResult.errors.length > 0) {
 		im.For(c); for (const err of interpretResult.errors) {
-			imBegin(c, ROW); imNoWrap(c); {
+			imBegin(c, ROW); imPreWrap(c); {
 				imCodeSpanBegin(c); {
 					if (im.If(c) && err.expr) {
 						imStr(c, ast.expressionToString(code, err.expr));
@@ -274,7 +276,6 @@ function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
 						let start = Math.max(0, err.pos.i - 10);
 						const end = err.pos.i + 1;
 						imStr(c, code.substring(start, end));
-						imStr(c, "_<- ");
 					} im.IfEnd(c);
 				} imCodeSpanEnd(c);
 
@@ -292,6 +293,23 @@ function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
 					imStr(c, p);
 				} im.ForEnd(c);
 			} imCodeEnd(c);
+		} im.IfEnd(c);
+
+		const globalVars = interpretResult.scopes[0].vars;
+		if (im.If(c) && globalVars.size > 0) {
+			imVDivider(c);
+
+			im.For(c); for (const [k, v] of globalVars) {
+				imBegin(c, BLOCK); {
+					imCodeSpanBegin(c); {
+						imStr(c, k);
+					} imCodeSpanEnd(c);
+					imStr(c, " = ");
+					imStrFmt(c, v, pl2.resultToString);
+					imStr(c, " | ");
+					imStr(c, pl2.resultTypeToString(v.type));
+				} imEnd(c);
+			} im.ForEnd(c)
 		} im.IfEnd(c);
 
 		if (im.If(c) && interpretResult.logOutputs.length > 0) {
@@ -313,7 +331,49 @@ function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
 		if (im.If(c) && interpretResult.dataOutputs.length > 0) {
 			im.For(c); for (const output of interpretResult.dataOutputs) {
 				imSubHeading(c, output.title);
+				imBegin(c, BLOCK); {
+					if (im.Memo(c, output.axes.length)) {
+						imdom.setStyle(c, "display", "grid");
+						imdom.setStyle(c, "gridTemplateColumns", "1fr ".repeat(output.axes.length));
+					}
+
+					im.For(c); for (const axis of output.axes) {
+						imBegin(c, BLOCK); imB(c); {
+							imStr(c, axis.name);
+						} imEnd(c);
+					} im.ForEnd(c);
+
+					let numDataPoints = 0;
+					for (const axis of output.axes) {
+						numDataPoints = Math.max(numDataPoints, axis.numbers.length);
+					}
+
+					im.For(c); 
+					for (let idx = 0; idx < numDataPoints; idx++) {
+						for (let axisIdx = 0; axisIdx < output.axes.length; axisIdx++) {
+
+							const axis = output.axes[axisIdx];
+
+							let value = "-";
+							if (idx < axis.numbers.length) {
+								const num = axis.numbers[idx];
+								if (axis.labels) {
+									value = axis.labels[num];
+								} else {
+									value = "" + num;
+								}
+							}
+
+							imBegin(c, BLOCK); {
+								imStr(c, value);
+							} imEnd(c);
+
+						}
+					}
+					im.ForEnd(c);
+				} imEnd(c);
 			} im.ForEnd(c);
 		} im.IfEnd(c);
 	} im.IfEnd(c);
+
 }

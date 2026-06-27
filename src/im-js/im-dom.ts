@@ -1,4 +1,4 @@
-// IM-DOM 1.74
+// IM-DOM 1.75
 
 import { assert } from "./assert";
 import { im, ImCache, ImCacheEntries } from "./im-core";
@@ -1698,7 +1698,10 @@ export const imdom = {
     ElBegin:    imElBegin,    ElEnd: imElEnd,          // DOM nodes
     ElSvgBegin: imElSvgBegin, ElSvgEnd: imElSvgEnd,    // SVG Dom nodes (technically different :nerd-emoji:)
     Str:    imStr,       // Text node
-    StrFmt: imStrFmt,    // Text node, custom formatter for arbitrary object. Try to make formatter a constant! Otherwise, expect terrible performance
+    // Text node, custom formatter for arbitrary object. 
+    // It only formats when the object or formatter actually changes, so it can
+    // be more performant than just imStr(c, formatter(obj));
+    StrFmt: imStrFmt,    
     Text:   imStr,
     TextFmt: imStrFmt,
 

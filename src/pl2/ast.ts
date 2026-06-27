@@ -41,7 +41,6 @@ export const OP_GREATER_THAN    = 14;
 export const OP_GREATER_THAN_EQ = 15;
 export const OP_EQ              = 16;
 export const OP_NOT_EQ          = 17;
-export const OP_STRICT_EQ       = 18; // Webdev detected
 
 export type BinaryOperatorType =
  | typeof OP_NONE
@@ -62,7 +61,6 @@ export type BinaryOperatorType =
  | typeof OP_GREATER_THAN_EQ
  | typeof OP_EQ
  | typeof OP_NOT_EQ
- | typeof OP_STRICT_EQ
  ;
 
 export const UNARY_OP_NOT         = 1;
@@ -99,7 +97,6 @@ export function operatorToString(op: BinaryOperatorType): string {
 		case OP_LESS_THAN_EQ:    return "<=";
 		case OP_GREATER_THAN:    return ">";
 		case OP_GREATER_THAN_EQ: return ">=";
-		case OP_STRICT_EQ:       return "==="; 
 		case OP_EQ:              return "==";  // Look out for conflicts with the = operator !
 		case OP_NOT_EQ:          return "!=";  // Look out for conflicts with the ! operator !
 		default: assertNever(op);
@@ -383,7 +380,10 @@ export function parseOperatorInternal(parser: Parser): BinaryOperatorType {
 	if (compareAndAdvance(parser, "<"))  return OP_LESS_THAN;
 	if (compareAndAdvance(parser, ">=")) return OP_GREATER_THAN_EQ;
 	if (compareAndAdvance(parser, ">"))  return OP_GREATER_THAN;
-	if (compareAndAdvance(parser, "==="))return OP_STRICT_EQ;
+	if (compareAndAdvance(parser, "===")) {
+		reportParserError(parser, "Webdev detected, code rejected.");
+		return OP_EQ;
+	}
 	if (compareAndAdvance(parser, "==")) return OP_EQ;
 	if (compareAndAdvance(parser, "!=")) return OP_NOT_EQ;
 	return OP_NONE;
@@ -649,6 +649,9 @@ function parseForLoopRange(parser: Parser, lo: Expression): ForLoopRange | undef
 		rangeType = RANGE_GTE;
 	} else if (compareAndAdvance(parser, "..>")) {
 		rangeType = RANGE_GT;
+	} else if (compareAndAdvance(parser, "..=")) {
+		reportParserError(parser, "Not a valid range. Did you mean ..<= ?\nYou may also like ..> and ..>=");
+		return undefined;
 	} else {
 		// ERROR
 		return undefined;
@@ -865,7 +868,7 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 			const rhs = parseSingularExpression(parser);
 			if (!rhs) {
 				if (!hasNewErrors(parser, numErrors)) {
-					reportParserError(parser, "Expected the rhs of a binary expression here");
+					reportParserError(parser, "Expected the right-hand-side of a binary expression here");
 				}
 				break;
 			}
@@ -898,7 +901,7 @@ export function parseBinaryExpression(parser: Parser, lhs: Expression, level: nu
 		if (!rhs) {
 			if (!hasNewErrors(parser, numErrors)) {
 				// Different log message, so we can tell the two apart, xD
-				reportParserError(parser, "Expected a binary expression's rhs here");
+				reportParserError(parser, "Expected a binary expression's right-hand-side here");
 			}
 			break;
 		}
@@ -1023,7 +1026,6 @@ export function getOpLevel(op: BinaryOperatorType): number {
 		case OP_GREATER_THAN_EQ: return 3;
 		case OP_EQ:              return 3;
 		case OP_NOT_EQ:          return 3;
-		case OP_STRICT_EQ:       return 3;
 
 		case OP_ADD:             return 4;
 		case OP_SUBTRACT:        return 4;

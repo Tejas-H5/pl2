@@ -35,6 +35,11 @@ export function setRngSeed(g: RandomNumberGenerator, num: number) {
     d = c << 5;
 
     g.a = a; g.b = b; g.c = c; g.d = d;
+
+	getNextRng(g);
+	getNextRng(g);
+	getNextRng(g);
+	getNextRng(g);
 }
 
 export function getNextRng(g: RandomNumberGenerator) {

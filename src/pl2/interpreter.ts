@@ -275,13 +275,22 @@ export type DrawCall =
 export type DataOutput = {
 	title: string;
 	axes: DataOutputAxis[];
+	type: DataVisualiserType;
 }
+
+export const DataVisualiserType_Table  = 0;
+
+export type DataVisualiserType =
+ | typeof DataVisualiserType_Table
+ ;
 
 export type DataOutputAxis = {
 	name:     string;
 	init:     boolean;
-	numbers?: number[];
-	labels?:  string[];
+	numbers:  number[]; 
+	// if present, numbers will be integers into the labels array. 
+	// There's a compression opportunity here but we're not taking advantage of it yet.
+	labels?:  string[]; 
 }
 
 export type Scope = {
@@ -638,7 +647,10 @@ function evaluateFunctionCallInternal(fn: ast.FunctionCall, iter: ProgramIterato
 	const functionName = fn.name.name;
 	const userFn = getVar(iter, functionName);
 	if (!userFn) {
-		return setError(iter, fn.name, `Couldn't find function ${functionName} in this scope`);
+		let error = `Couldn't find function ${functionName} in this scope`;
+		error += getSuggestedSymbolsMessage(iter, functionName, false);
+
+		return setError(iter, fn, error);
 	}
 
 	if (userFn.type === Result_BuiltinFunction) {
@@ -1093,41 +1105,76 @@ export function evaluateBinaryOperationOnResults(expr: ast.BinaryExpression, lhs
 	return setError(iter, expr, `Can't apply ${ast.operatorToString(exprOp)} between ${resultTypeToString(lhs.type)} and ${resultTypeToString(rhs.type)}`);
 }
 
+type SuggestedSymbols = {
+	builtins: string[],
+	inScope:  string[],
+}
+
+function isFunctionType(type: ResultType): boolean {
+	return type === Result_Function || type === Result_BuiltinFunction;
+}
+
+function getSuggestedSymbols(iter: ProgramIterator, startsWith: string, onlyFunctions: boolean): SuggestedSymbols {
+	const result: SuggestedSymbols = {
+		builtins: [],
+		inScope: [],
+	}
+
+	// Let's try to find a builtin that a user might want. 
+	for (const k in builtins) {
+		if (k.startsWith(startsWith)) {
+			const val = builtins[k];
+
+			if (onlyFunctions && !isFunctionType(val.type)) {
+				continue;
+			}
+
+			result.builtins.push(k + " | " + resultTypeToString(val.type));
+		}
+	}
+
+	forEachReachableScope(iter, scope => {
+		for (const [k, res] of scope.vars) {
+			if (onlyFunctions && !isFunctionType(res.type)) {
+				continue;
+			}
+
+			if (k.startsWith(startsWith)) {
+				result.inScope.push(k + " | " + resultTypeToString(res.type));
+			}
+		}
+	});
+
+	return result;
+}
+
+function getSuggestedSymbolsMessage(iter: ProgramIterator, startsWith: string, onlyFunctions: boolean): string {
+	const suggestions = getSuggestedSymbols(iter, startsWith, onlyFunctions);
+
+	if (suggestions.inScope.length === 0 && suggestions.builtins.length === 0) {
+		return "";
+	}
+
+	let error = "\nYou may have been looking for:\n";
+
+	if (suggestions.inScope.length > 0) {
+		error += "in-scope:\n\t" 
+			  + suggestions.inScope.join("\n\t");
+	}
+
+	if (suggestions.builtins.length > 0) {
+		error += "builtins:\n\t" 
+			  + suggestions.builtins.join("\n\t");
+	}
+
+	return error;
+}
+
 function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator): ExprReturn {
 	const val = getVar(iter, expr.name);
 	if (!val) {
-		// Let's try to find a builtin that a user might want. 
-		const suggestedBultins: string[] = [];
-		for (const k in builtins) {
-			if (k.startsWith(expr.name)) {
-				suggestedBultins.push(k + " | " + resultTypeToString(builtins[k].type));
-			}
-		}
-
-		const suggestedInScopeVars: string[] = [];
-		forEachReachableScope(iter, scope => {
-			for (const [k, res] of scope.vars) {
-				if (k.startsWith(expr.name)) {
-					suggestedInScopeVars.push(k + " | " + resultTypeToString(res.type));
-				}
-			}
-		});
-
 		let error = "Variable not found: " + expr.name;
-
-		if (suggestedInScopeVars.length > 0 || suggestedBultins.length > 0) {
-			error += "\nYou may have been looking for:\n";
-		}
-
-		if (suggestedInScopeVars.length > 0) {
-			error += "in-scope:\n\t" 
-				  + suggestedInScopeVars.join("\n\t");
-		}
-
-		if (suggestedBultins.length > 0) {
-			error += "builtins:\n\t" 
-				  + suggestedBultins.join("\n\t");
-		}
+		error += getSuggestedSymbolsMessage(iter, expr.name, false);
 
 		return setError(iter, expr, error);
 	}
@@ -1564,6 +1611,7 @@ export const builtins: Record<string, Result> = {
 	// Very simple API. This means that consumers will need to validate the outputs
 	"plot_new":         { type: Result_BuiltinFunction, val: plot_new },
 	"plot_value":       { type: Result_BuiltinFunction, val: plot_value },
+	"plot_values":      { type: Result_BuiltinFunction, val: plot_values },
 
 	// Debug/introspection
 	"expr_to_string":      { type: Result_BuiltinFunction, val: expr_to_string },
@@ -2301,18 +2349,28 @@ export function draw_background(call: ast.FunctionCall, iter: ProgramIterator): 
 }
 
 export function plot_new(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	return plot_new_internal(call, iter, DataVisualiserType_Table);
+}
+
+export function plot_new_internal(call: ast.FunctionCall, iter: ProgramIterator, suggestedVisualiser: DataVisualiserType): ExprReturn {
 	if (!checkNumArgs(call, 1, iter)) return RETURN_ERROR;
 
 	const title = evaluateString(call.arguments[0], iter);
 	if (!title) return RETURN_ERROR;
 
+	newPlotInternal(iter, title, suggestedVisualiser);
+	return RETURN_NONE;
+}
+
+function newPlotInternal(iter: ProgramIterator, title: string, type: DataVisualiserType): DataOutput {
 	const plot: DataOutput = {
 		title: title,
 		axes: [],
+		type: type,
 	};
 
 	iter.dataOutputs.push(plot);
-	return RETURN_NONE;
+	return plot;
 }
 
 export function plot_value(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
@@ -2327,22 +2385,42 @@ export function plot_value(call: ast.FunctionCall, iter: ProgramIterator): ExprR
 	const value = evaluateExpressionValue(call.arguments[1], iter);
 	if (!value) return RETURN_ERROR;
 
-	const axis = getDataAxis(output, name);
+	return plotValueInternal(iter, output, name, value, call.arguments[1]);
+}
+
+function plotValueInternal(iter: ProgramIterator, output: DataOutput, axisName: string, value: Result, valueExpr: ast.Expression): ExprReturn {
+	const axis = getDataAxis(output, axisName);
 
 	switch(value.type) {
 		case Result_Number: {
 			if (axis.init && !axis.numbers) {
-				return setError(iter, call.arguments[1], "Can't push a number to a non-number axis");
+				return setError(iter, valueExpr, "Can't push a number to a non-number axis");
 			}
 			pushNumberToAxis(axis, value.val); 
 		} break;
 		case Result_String: {
 			if (axis.init && !axis.labels) {
-				return setError(iter, call.arguments[1], "Can't push a label to a non-label axis");
+				return setError(iter, valueExpr, "Can't push a label to a non-label axis");
 			}
 			pushStringToAxis(axis, value.val);
 		} break;
-		default: return setError(iter, call.arguments[1], "Invalid type: " + resultTypeToString(value.type));
+		default: return setError(iter, valueExpr, "Invalid type: " + resultTypeToString(value.type));
+	}
+
+	return RETURN_NONE;
+}
+
+export function plot_values(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	const output = ensureDataOutput(iter, call);
+	if (!output) return RETURN_ERROR;
+
+	for (const expr of call.arguments) {
+		const val = evaluateExpressionValue(expr, iter);
+		if (!val) return RETURN_ERROR;
+
+		const exprString = ast.expressionToString(iter.program.code, expr);
+		const rt = plotValueInternal(iter, output, exprString, val, expr);
+		if (rt) return rt;
 	}
 
 	return RETURN_NONE;
@@ -2351,7 +2429,7 @@ export function plot_value(call: ast.FunctionCall, iter: ProgramIterator): ExprR
 function ensureDataOutput(iter: ProgramIterator, iterExpr: ast.Expression): DataOutput | undefined {
 	const output = iter.dataOutputs[iter.dataOutputs.length - 1];
 	if (!output) {
-		setError(iter, iterExpr, "Need at least one plot to start plotting. Call new_plot");
+		setError(iter, iterExpr, "Need at least one plot to start plotting. Call plot_new before calling this");
 		return undefined
 	}
 
@@ -2376,8 +2454,9 @@ function getDataAxis(output: DataOutput, axisName: string): DataOutputAxis {
 	}
 
 	const axis: DataOutputAxis = {
-		name: axisName,
-		init: false,
+		name:    axisName,
+		init:    false,
+		numbers: [],
 	};
 	output.axes.push(axis);
 

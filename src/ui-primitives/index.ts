@@ -86,7 +86,8 @@ export function imVDivider(c: ImCache) {
 
 export const imEnd   = imui.End;
 export const imFlex  = imui.Flex;
-export const imStr   = imdom.Str;
+export const imStr    = imdom.Str;
+export const imStrFmt = imdom.StrFmt;
 
 export function imCodeBegin(c: ImCache) {
     const result = imBegin(c, BLOCK); // Prevent style leaking out
@@ -102,6 +103,7 @@ export function imCodeBegin(c: ImCache) {
 export function imCodeEnd(c: ImCache) {
 	imEnd(c);
 }
+
 export function imCodeSpanBegin(c: ImCache) {
     const result = imBegin(c, INLINE); { // Prevent style leaking out
 		imBegin(c, INLINE);  {
@@ -117,10 +119,20 @@ export function imCodeSpanBegin(c: ImCache) {
 	return result;
 }
 
-export function imNoWrap(c: ImCache) {
+export function imPre(c: ImCache) {
 	if (im.isFirstishRender(c)) {
 		imdom.setStyle(c, "whiteSpace", "pre")
 	}
+}
+
+export function imPreWrap(c: ImCache) {
+	if (im.isFirstishRender(c)) {
+		imdom.setStyle(c, "whiteSpace", "pre-wrap")
+	}
+}
+
+export function imB(c: ImCache) {
+	if (im.isFirstishRender(c)) imdom.setStyle(c, "fontWeight", "bold");
 }
 
 export function imCodeSpanEnd(c: ImCache) {
