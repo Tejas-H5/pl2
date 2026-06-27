@@ -619,14 +619,14 @@ function hasMousePress(c: ImCache, el = getElement(c)): boolean {
     return elIsInSetThisFrame(el, mouse.mouseDownElements)
 }
 
-function hasMouseUp(c: ImCache, el = getElement(c)): boolean {
-    const mouse = getMouse();
-    return elIsInSetThisFrame(el, mouse.mouseUpElements)
-}
-
 function hasMouseClick(c: ImCache, el = getElement(c)): boolean {
     const mouse = getMouse();
     return elIsInSetThisFrame(el, mouse.mouseClickElements)
+}
+
+function hasMouseUp(c: ImCache, el = getElement(c)): boolean {
+    const mouse = getMouse();
+    return elIsInSetThisFrame(el, mouse.mouseUpElements)
 }
 
 function hasMouseOver(c: ImCache, el = getElement(c)): boolean {

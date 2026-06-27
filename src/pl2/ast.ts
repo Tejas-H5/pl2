@@ -677,6 +677,8 @@ function parseForLoopRange(parser: Parser, lo: Expression): ForLoopRange | undef
 export function parseSingularExpressionInternal(parser: Parser): Expression | undefined {
 	parseWhitespace(parser);
 
+	const pos = parserPos(parser);
+
 	// Most keywords here will be followed by a symbol or space.
 	// We need to do this to disambiguate them from a similarly named identifier, like returnPos or ifFound.
 	// Probably a bit scuffed of an approach but I also don't see anything wrong with it.
@@ -693,6 +695,14 @@ export function parseSingularExpressionInternal(parser: Parser): Expression | un
 	if (compareCurrentWithWordBoundary(parser, "if"))     { return parseIfChain(parser); }
 	if (compareCurrentWithWordBoundary(parser, "for"))    { return parseForLoop(parser) }
 	if (compareCurrentWithWordBoundary(parser, "return")) { return parseAnyReturnStatement(parser); }
+	if (compareCurrentWithWordBoundary(parser, "continue")) { 
+		advanceBy(parser, "continue".length);
+		return { type: Expression_Continue, start: pos, end: parserPos(parser), };
+	}
+	if (compareCurrentWithWordBoundary(parser, "break")) { 
+		advanceBy(parser, "break".length);
+		return { type: Expression_Break, start: pos, end: parserPos(parser), };
+	}
 
 	if (compareCurrentWithWordBoundary(parser, "true"))   { return parseBooleanLiteral(parser, true); }
 	if (compareCurrentWithWordBoundary(parser, "false"))  { return parseBooleanLiteral(parser, false); }
@@ -705,6 +715,15 @@ export function parseSingularExpressionInternal(parser: Parser): Expression | un
 		assert(!!identifier);
 
 		// No whitespace parsing here. fn(x) to work, fn (x) to not work.
+		// This allows us to omit () for if-checks. 
+		// Otherwise, stuff like if something { ... } can't be parsed correctly - 
+		// We would expect something like
+		// if             something                    { ... }
+		// ^ if keyword   ^ condition ( 1 identifier)  ^ code block
+		// But the parser would do this instead:
+		// if             something { ... }
+		// ^ if keyword   ^ condition ( 1 type initializer )    ^ Error - where is the code block ??
+		// This does mean that map { } won't work but map{} will. I think that is ok
 
 		let typeArgs: Expression[] | undefined;
 		if (currentChar(parser) === "<") {

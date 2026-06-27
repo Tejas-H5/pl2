@@ -9,6 +9,10 @@ const cssb = imui.newCssBuilder();
 cssb.s(INTER_FONT_CSS);
 cssb.s(`
 
+body {
+	margin: 0;
+}
+
 textarea {
     all: unset;
     font-family: MainGameFont;
@@ -42,15 +46,42 @@ export function imHeading(c: ImCache, text: string) {
 }
 
 export function imSubHeading(c: ImCache, text: string) {
-	imdom.ElBegin(c, el.H3); {
+	imdom.ElBegin(c, el.H4); {
 		imStr(c, text);
-	} imdom.ElEnd(c, el.H3);
+	} imdom.ElEnd(c, el.H4);
 }
 
-export function imBegin(c: ImCache, type: DisplayType, align = LEFT) {
+export function imBegin(c: ImCache, type: DisplayType, align = LEFT, justify = LEFT) {
 	const result = imui.Begin(c, type);
 	imui.Align(c, align);
+	imui.Justify(c, justify);
 	return result;
+}
+
+export function imHSpace(c: ImCache, col: string) {
+	imBegin(c, BLOCK); {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "width", "10px")
+			imdom.setStyle(c, "backgroundColor", col);
+		}
+	} imEnd(c);
+}
+
+export function imVSpace(c: ImCache, col: string) {
+	imBegin(c, BLOCK); {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "height", "10px")
+			imdom.setStyle(c, "backgroundColor", col);
+		}
+	} imEnd(c);
+}
+
+export function imVDivider(c: ImCache) {
+	imBegin(c, BLOCK); {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "minHeight", "10px")
+		}
+	} imEnd(c);
 }
 
 export const imEnd   = imui.End;
@@ -61,8 +92,9 @@ export function imCodeBegin(c: ImCache) {
     const result = imBegin(c, BLOCK); // Prevent style leaking out
 	if (im.isFirstishRender(c)) {
 		imdom.setStyle(c, "fontFamily", "monospace")
-		imdom.setStyle(c, "whiteSpace", "nowrap")
+		imdom.setStyle(c, "whiteSpace", "pre")
 		imdom.setStyle(c, "tabSize", "4")
+		imdom.setStyle(c, "backgroundColor", cssVars.bg2)
 	}
 	return result;
 }
@@ -70,17 +102,12 @@ export function imCodeBegin(c: ImCache) {
 export function imCodeEnd(c: ImCache) {
 	imEnd(c);
 }
-
 export function imCodeSpanBegin(c: ImCache) {
     const result = imBegin(c, INLINE); { // Prevent style leaking out
-		if (im.isFirstishRender(c)) {
-			imdom.setStyle(c, "padding", "0px 5px")
-		}
-
 		imBegin(c, INLINE);  {
 			if (im.isFirstishRender(c)) {
 				imdom.setStyle(c, "fontFamily", "monospace")
-				imdom.setStyle(c, "whiteSpace", "nowrap")
+				imdom.setStyle(c, "whiteSpace", "pre")
 				imdom.setStyle(c, "tabSize", "4")
 				imdom.setStyle(c, "background", cssVars.bg2)
 			}
@@ -90,8 +117,29 @@ export function imCodeSpanBegin(c: ImCache) {
 	return result;
 }
 
+export function imNoWrap(c: ImCache) {
+	if (im.isFirstishRender(c)) {
+		imdom.setStyle(c, "whiteSpace", "pre")
+	}
+}
+
 export function imCodeSpanEnd(c: ImCache) {
 	imEnd(c);
+	imEnd(c);
+}
+
+export function imButtonBegin(c: ImCache, type: DisplayType) {
+	imBegin(c, type);
+	if (im.isFirstishRender(c)) {
+		imdom.setStyle(c, "backgroundColor", cssVars.fg)
+		imdom.setStyle(c, "color", cssVars.bg)
+		imdom.setStyle(c, "cursor", "pointer")
+		imdom.setStyle(c, "padding", "2px 10px")
+		imdom.setStyle(c, "userSelect", "none")
+	}
+}
+
+export function imButtonEnd(c: ImCache) {
 	imEnd(c);
 }
 

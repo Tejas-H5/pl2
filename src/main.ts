@@ -1,9 +1,11 @@
 import { im, ImCache, imdom } from "im-js";
-import { BLOCK, COL, imui, ROW } from "im-ui";
+import { BLOCK, CENTER, COL, cssVars, imui, ROW } from "im-ui";
 import { ast, pl2 } from "pl2";
 import { imHandleTextAreaEvent, imTextAreaBegin, imTextAreaEnd } from "/im-ui/editable-text-area";
 import {
 	imBegin,
+	imButtonBegin,
+	imButtonEnd,
 	imCodeBegin,
 	imCodeEnd,
 	imCodeSpanBegin,
@@ -11,8 +13,12 @@ import {
 	imEnd,
 	imFlex,
 	imHeading,
+	imHSpace,
+	imNoWrap,
 	imStr,
-	imSubHeading
+	imSubHeading,
+	imVDivider,
+	imVSpace
 } from "ui-primitives";
 
 const c: ImCache = []
@@ -29,35 +35,196 @@ function imMain(c: ImCache) {
 	} im.CacheEnd(c);
 }
 
+type AppState = {
+	cells: CodeCellState[];
+}
+
+function loadState(): AppState | undefined {
+	const val = localStorage.getItem("state");
+	if (!val) {
+		return undefined;
+	}
+
+	try {
+		const loaded = JSON.parse(val);
+		return loaded as AppState;
+	} catch(err) {
+		console.error(err);
+	}
+
+	return undefined;
+}
+
+function saveState(state: AppState) {
+	const json = JSON.stringify(state);
+	localStorage.setItem("state", json);
+}
+
+let debounceTimeout = 0;
+let saveStartedAt   = 0;
+let saving          = false;
+function saveStateDebounced(state: AppState) {
+	saveStartedAt = Date.now();
+	saving        = true;
+
+	clearTimeout(debounceTimeout);
+	debounceTimeout = setTimeout(() => {
+		saveState(state);
+		saving = false;
+	}, 1000);
+}
+
+function newAppState(): AppState {
+	const loaded = loadState();
+	if (loaded) {
+		return loaded
+	}
+
+	return {
+		cells: [],
+	};
+}
+
 function imApp(c: ImCache) {
 	if (im.isFirstishRender(c)) {
 		imdom.setStyle(c, "fontFamily", "Inter")
 		imdom.setStyle(c, "fontSize", "1.2em")
 	}
 
-	const state = im.GetInline(c, imApp) ?? im.Set(c, {
-		code: localStorage.getItem("temp") ?? "",
-		codeVersion: 0,
-	});
+	const state = im.State(c, newAppState);
 
+	imBegin(c, ROW, CENTER); {
+		imHeading(c, "PL2");
+
+		imBegin(c, BLOCK); imFlex(c); imEnd(c);
+
+		imStr(c, state.cells.length);
+		imStr(c, " ");
+		imStr(c, state.cells.length === 1 ? "cell" : "cells");
+
+		imBegin(c, BLOCK); imFlex(c); imEnd(c);
+
+		if (im.If(c) && saving) {
+			imStr(c, "Saving...");
+		} else {
+			imStr(c, "Saved");
+		} im.IfEnd(c);
+	} imEnd(c);
+
+	let deferredEvent: (() => void) | undefined;
+
+	im.For(c); for (let idx = 0; idx < state.cells.length; idx++) {
+		const cellState = state.cells[idx];
+
+		imCodeCell(c, cellState);
+
+		imVSpace(c, cssVars.bg)
+
+		imBegin(c, ROW, CENTER, CENTER); {
+			imButtonBegin(c, ROW); {
+				imStr(c, "-"); 
+				if (imdom.hasMousePress(c)) {
+					deferredEvent = () => {
+						state.cells.splice(idx, 1);
+						saveStateDebounced(state);
+					}
+				}
+			} imButtonEnd(c);
+
+			imHSpace(c, cssVars.bg);
+
+			imButtonBegin(c, ROW); {
+				imStr(c, "+"); 
+				if (imdom.hasMousePress(c)) {
+					deferredEvent = () => {
+						state.cells.splice(idx + 1, 0, newCodeCellState());
+						saveStateDebounced(state);
+					}
+				}
+			} imButtonEnd(c);
+		} imEnd(c);
+
+		imVSpace(c, cssVars.bg)
+
+		if (im.Memo(c, cellState.codeVersion)) {
+			saveStateDebounced(state);
+		}
+	} im.ForEnd(c);
+
+	im.If(c); if (state.cells.length === 0) {
+		imBegin(c, ROW, CENTER, CENTER); {
+			imButtonBegin(c, ROW); {
+				imStr(c, "+"); 
+				if (imdom.hasMousePress(c)) {
+					console.log("hi")
+					deferredEvent = () => {
+						state.cells.push(newCodeCellState());
+						saveStateDebounced(state);
+					}
+				}
+			} imButtonEnd(c);
+		} imEnd(c);
+	} im.IfEnd(c);
+
+	if (deferredEvent) {
+		deferredEvent();
+	}
+}
+
+type CodeCellState = {
+	code:        string;
+	codeVersion: number;
+};
+
+function parseIntOrZero(text: string | null | undefined): number {
+	if (!text) {
+		return 0;
+	}
+
+	let val = parseInt(text);
+	if (Number.isNaN(val)) {
+		return 0;
+	}
+
+	return val;
+}
+
+function getCellKey(cellBucket: string, idx: number): string {
+	return cellBucket + "-" + idx;
+}
+
+function newCodeCellState(): CodeCellState {
+	return {
+		code: "",
+		codeVersion: 0,
+	};
+}
+
+function imCodeCell(c: ImCache, state: CodeCellState): CodeCellState {
 	imBegin(c, ROW); {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "maxHeight", "80vh");
+			imdom.setStyle(c, "overflow", "auto");
+		}
+
 		imBegin(c, COL); imFlex(c); {
-			imHeading(c, "Code");
 			const ev = imCodeEditor(c, state.code);
 			if (ev) {
 				if (ev.newCode !== undefined) {
 					state.code = ev.newCode;
-					localStorage.setItem("temp", ev.newCode);
 					state.codeVersion += 1;
 				}
 			}
 		} imEnd(c);
-		imBegin(c, COL); imFlex(c); {
-			imHeading(c, "Output");
 
+		imHSpace(c, cssVars.bg);
+
+		imBegin(c, COL); imFlex(c); {
 			imCodeOutput(c, state.code, state.codeVersion);
 		} imEnd(c);
 	} imEnd(c);
+
+	return state;
 }
 
 type CodeEditorEv = {
@@ -82,21 +249,22 @@ function imCodeEditor(c: ImCache, code: string): CodeEditorEv | undefined {
 }
 
 function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
-	const output =
-		im.GetInline(c, imApp) ??
-		im.Set(c, { val: pl2.interpretCode("") });
+	const output = im.GetInline(c, imApp) ?? im.Set(c, {
+		val:      pl2.interpretCode(""),
+		evalTime: 0,
+	});
 
 	if (im.Memo(c, codeVersion)) {
-		output.val = pl2.interpretCode(code);
+		const t0        = performance.now();
+		output.val      = pl2.interpretCode(code);
+		output.evalTime = performance.now() - t0;
 	}
 
 	const interpretResult = output.val;
 
 	if (im.If(c) && interpretResult.errors.length > 0) {
-		imHeading(c, "Errors");
-
 		im.For(c); for (const err of interpretResult.errors) {
-			imBegin(c, BLOCK); {
+			imBegin(c, ROW); imNoWrap(c); {
 				imCodeSpanBegin(c); {
 					if (im.If(c) && err.expr) {
 						imStr(c, ast.expressionToString(code, err.expr));
@@ -110,35 +278,42 @@ function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
 					} im.IfEnd(c);
 				} imCodeSpanEnd(c);
 
+				imHSpace(c, cssVars.bg);
+
 				imStr(c, err.message);
 			} imEnd(c);
 		} im.ForEnd(c);
 	} else if (im.ElseIf(c)) {
-		im.For(c); for (const output of interpretResult.logOutputs) {
-			imBegin(c, BLOCK); {
-				imStr(c, ast.expressionToString(code, output.expr));
-				imStr(c, " -> ");
-				imStr(c, output.text);
-			} imEnd(c);
-		} im.ForEnd(c)
-		if (im.If(c) && interpretResult.logOutputs.length === 0) {
-			imStr(c, "No strings yet");
+		// imStr(c, "Ran in "); imStr(c, Math.round(output.evalTime)); imStr(c, "ms");
+
+		if (im.If(c) && interpretResult.printOutputs.length > 0) {
+			imCodeBegin(c); {
+				im.For(c); for (const p of interpretResult.printOutputs) {
+					imStr(c, p);
+				} im.ForEnd(c);
+			} imCodeEnd(c);
 		} im.IfEnd(c);
 
-		imSubHeading(c, "Variables");
+		if (im.If(c) && interpretResult.logOutputs.length > 0) {
+			imVDivider(c);
 
-		const globalScope = output.val.scopes[0];
-		im.For(c); for (const [name, value] of globalScope.vars) {
-			imBegin(c, BLOCK); {
-				imCodeSpanBegin(c); imStr(c, name); imCodeSpanEnd(c);
-				imStr(c, " -> ");
-				imCodeSpanBegin(c); imStr(c, pl2.resultToString(value)); imCodeSpanEnd(c);
-				imStr(c, " | ");
-				imStr(c, pl2.resultTypeToString(value.type));
-			} imEnd(c);
-		} im.ForEnd(c);
-		if (im.If(c) && globalScope.vars.size === 0) {
-			imStr(c, "No variables defined yet");
+			im.For(c); for (const output of interpretResult.logOutputs) {
+				imBegin(c, BLOCK); {
+					imCodeSpanBegin(c); {
+						imStr(c, ast.expressionToString(code, output.expr));
+					} imCodeSpanEnd(c);
+					imStr(c, " -> ");
+					imStr(c, output.text);
+					imStr(c, " | ");
+					imStr(c, pl2.resultTypeToString(output.result.type));
+				} imEnd(c);
+			} im.ForEnd(c)
+		} im.IfEnd(c);
+
+		if (im.If(c) && interpretResult.dataOutputs.length > 0) {
+			im.For(c); for (const output of interpretResult.dataOutputs) {
+				imSubHeading(c, output.title);
+			} im.ForEnd(c);
 		} im.IfEnd(c);
 	} im.IfEnd(c);
 }

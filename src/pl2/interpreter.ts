@@ -4,6 +4,7 @@ import * as matrix from "./matrix";
 import * as vector from "./vector";
 import { newParser } from "./parser";
 import { TextPosition } from "./text-pos";
+import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, setRngSeed } from "./random";
 
 ////////////////////////////////////////////////////
 // Types
@@ -34,7 +35,7 @@ export function resultTypeToString(type: ResultType) {
 		case Result_String:   return "String";
 		case Result_Boolean:  return "Boolean";
 		case Result_Function: return "Function";
-		case Result_BuiltinFunction:   return "*Function";
+		case Result_BuiltinFunction:   return "Function (builtin)";
 		case Result_List:     return "List";
 		case Result_Map:      return "Map";
 		case Result_Vector:   return "Vector";
@@ -119,6 +120,8 @@ export type Result =
  | ResultMatrix
  ;
 
+// NOTE: a real clone will need to handle cyclic references.
+// (not hard to code actually, but it's not as simple as you thought - the performance may or may not be crap)
 export function cloneResultIfValueSemantics(src: Result): Result {
 	switch(src.type) {
 		case Result_Nothing:           return { type: src.type, val: src.val };
@@ -128,8 +131,8 @@ export function cloneResultIfValueSemantics(src: Result): Result {
 		case Result_Function:          return { type: src.type, val: src.val };
 		case Result_BuiltinFunction:   return { type: src.type, val: src.val };
 		// These container types will actually have value semantics
-		case Result_Vector: return { type: src.type, val: src.val.map(x => x) };
-		case Result_Matrix: return { type: src.type, val: matrix.clone(src.val) };
+		case Result_Vector:            return { type: src.type, val: src.val.map(x => x) };
+		case Result_Matrix:            return { type: src.type, val: matrix.clone(src.val) };
 		// Typical by-reference semantics
 		case Result_List:              return { type: src.type, val: src.val };
 		case Result_Map:			   return { type: src.type, val: src.val };
@@ -160,9 +163,12 @@ export type ProgramIterator = {
 		} | undefined;
 	};
 
+	rng: RandomNumberGenerator;
+
 	// Outputs
-	logOutputs:  LogOutput[];
-	dataOutputs: DataOutput[];
+	printOutputs: string[];
+	logOutputs:   LogOutput[];
+	dataOutputs:  DataOutput[];
 
 	drawParams: {
 		color:      Color;
@@ -183,8 +189,9 @@ export type RelationOutput = {
 };
 
 export type LogOutput = {
-	expr: ast.Expression;
-	text: string;
+	expr:   ast.Expression;
+	text:   string;
+	result: Result;
 }
 
 export type Color = {
@@ -300,6 +307,9 @@ export function newProgramIterator(program: ast.Program): ProgramIterator {
 		stack:  [],
 		scopes: [],
 
+		rng: newRandomNumberGenerator(),
+
+		printOutputs:      [],
 		logOutputs:  [],
 		dataOutputs: [],
 
@@ -375,6 +385,25 @@ export function getVar(iter: ProgramIterator, name: string): Result | undefined 
 	return undefined;
 }
 
+export function forEachReachableScope(iter: ProgramIterator, fn: (scope: Scope) => void): void {
+	if (iter.scopes.length === 0) return;
+
+	for (let i = iter.scopes.length - 1; i > 0; i--) {
+		const scope = iter.scopes[i];
+		if (scope.flags & SCOPE_HIDDEN) {
+			continue;
+		}
+
+		fn(scope);
+
+		if (scope.flags & SCOPE_ISOLATED) {
+			break;
+		}
+	}
+
+	fn(iter.scopes[0])
+}
+
 export function setOrCreateVar(iter: ProgramIterator, name: string, val: Result){
 	if (iter.scopes.length === 0) return;
 
@@ -439,13 +468,12 @@ export type ExprReturn =
 // Main functionality
 
 export function interpretProgram(program: ast.Program, iter: ProgramIterator) {
+	setRngSeed(iter.rng, 0);
+
 	// The root scope will never get popped.
 	pushScope(iter, 0); 
 
-	for (const expr of program.statements) {
-		const rt = evaluateExpression(expr, iter);
-		if (rt !== RETURN_NONE) break;
-	}
+	evaluateExpressionBlock(program.statements, iter);
 
 	assert(iter.scopes.length === 1);
 
@@ -573,8 +601,8 @@ export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator):
 			return result;
 		}
 		case ast.Expression_ForLoopRange: return setError(iter, expr, "Can't use a for-loop range outside of a for-loop.");
-		case ast.Expression_Continue: return RETURN_NONE;
-		case ast.Expression_Break:    return RETURN_NONE;
+		case ast.Expression_Continue:     return setError(iter, expr, "continue can only be evaluated as a block-level statement");
+		case ast.Expression_Break:        return setError(iter, expr, "break can only be evaluated as a block-level statement");
 		default: {
 			assertNever(expr);
 		} break;
@@ -655,16 +683,26 @@ function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator)
 	const scope = getCurrentScope(iter);
 
 	for (const expr of block) {
-		if (scope.flags & SCOPE_ALLOW_CONTINUE_BREAK) {
-			if (expr.type === ast.Expression_Break)    return setResult(iter, BREAK);
-			if (expr.type === ast.Expression_Continue) return setResult(iter, CONTINUE);
+		if (expr.type === ast.Expression_Break) {
+			if ((scope.flags & SCOPE_ALLOW_CONTINUE_BREAK) === 0) {
+				return setError(iter, expr, "break not allowed outside of a loop");
+			}
+			setResult(iter, BREAK);
+			return RETURN_RESULT;
+		}
+		if (expr.type === ast.Expression_Continue) {
+			if ((scope.flags & SCOPE_ALLOW_CONTINUE_BREAK) === 0) {
+				return setError(iter, expr, "continue not allowed outside of a loop");
+			}
+			setResult(iter, CONTINUE);
+			return RETURN_RESULT;
 		}
 
 		const rt = evaluateExpression(expr, iter);
 		if (rt !== RETURN_NONE) return rt;
 	}
 
-	return RETURN_NONE;
+	return setResult(iter, NOTHING);
 }
 
 
@@ -1058,7 +1096,40 @@ export function evaluateBinaryOperationOnResults(expr: ast.BinaryExpression, lhs
 function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator): ExprReturn {
 	const val = getVar(iter, expr.name);
 	if (!val) {
-		return setError(iter, expr, "Variable not found: " + expr.name);
+		// Let's try to find a builtin that a user might want. 
+		const suggestedBultins: string[] = [];
+		for (const k in builtins) {
+			if (k.startsWith(expr.name)) {
+				suggestedBultins.push(k + " | " + resultTypeToString(builtins[k].type));
+			}
+		}
+
+		const suggestedInScopeVars: string[] = [];
+		forEachReachableScope(iter, scope => {
+			for (const [k, res] of scope.vars) {
+				if (k.startsWith(expr.name)) {
+					suggestedInScopeVars.push(k + " | " + resultTypeToString(res.type));
+				}
+			}
+		});
+
+		let error = "Variable not found: " + expr.name;
+
+		if (suggestedInScopeVars.length > 0 || suggestedBultins.length > 0) {
+			error += "\nYou may have been looking for:\n";
+		}
+
+		if (suggestedInScopeVars.length > 0) {
+			error += "in-scope:\n\t" 
+				  + suggestedInScopeVars.join("\n\t");
+		}
+
+		if (suggestedBultins.length > 0) {
+			error += "builtins:\n\t" 
+				  + suggestedBultins.join("\n\t");
+		}
+
+		return setError(iter, expr, error);
 	}
 
 	return setResult(iter, val);
@@ -1080,7 +1151,6 @@ const LOOP_CONTINUE = 2;
 const LOOP_RETURN   = 3;
 
 function evaluateLoopStatementReturn(iter: ProgramIterator, rt: ExprReturn): number {
-	if (rt === RETURN_ERROR) return RETURN_ERROR;
 	if (rt === RETURN_RESULT) {
 		if (iter.lastResult.result === BREAK) {
 			setResult(iter, NOTHING);
@@ -1147,12 +1217,18 @@ function evaluateForLoopInternal(expr: ast.ForLoop, iter: ProgramIterator): Expr
 			startResult.val = nextLoopVal;
 
 			const ls = evaluateLoopStatementReturn(iter, rt);
-			if (ls === LOOP_BREAK)    break;
-			if (ls === LOOP_CONTINUE) continue;
-			if (ls === LOOP_RETURN)   return RETURN_ERROR;
+			if (ls === LOOP_BREAK) {
+				break;
+			}
+			if (ls === LOOP_CONTINUE) {
+				continue;
+			}
+			if (ls === LOOP_RETURN) {
+				return RETURN_ERROR;
+			}
 		}
 
-		return RETURN_NONE;
+		return setResult(iter, NOTHING);
 	}
 
 	const toIterate = evaluateExpressionValue(expr.toIterate, iter);
@@ -1449,8 +1525,86 @@ export function resultToString(result: Result): string {
 ////////////////////////////////////////////////////
 // Builtins
 
+export const builtins: Record<string, Result> = {
+	// Constants
+	"nothing":    NOTHING, 
+
+	// Output
+	"print":   { type: Result_BuiltinFunction, val: print },
+	"println": { type: Result_BuiltinFunction, val: println },
+	"log":     { type: Result_BuiltinFunction, val: log },
+
+	// Matrices/Vectors
+	"matrix_transform_cartesian":                     { type: Result_BuiltinFunction, val: matrix_transform_cartesian },
+	"matrix_transform_3d_pos_target_up_fov":          { type: Result_BuiltinFunction, val: matrix_transform_3d_pos_target_up_fov },
+	"matrix_transform_3d_pos_target_up_width_height": { type: Result_BuiltinFunction, val: matrix_transform_3d_pos_target_up_width_height },
+	"matrix_transpose":                               { type: Result_BuiltinFunction, val: transpose },
+	"matrix_inverse":                                 { type: Result_BuiltinFunction, val: inverse },
+	"vector_len":                                     { type: Result_BuiltinFunction, val: vector_len },
+	"vector_dot":                                     { type: Result_BuiltinFunction, val: vector_dot },
+	"vector_cross":                                   { type: Result_BuiltinFunction, val: vector_cross },
+	"mul":                                            { type: Result_BuiltinFunction, val: mul },
+	"matrix_mul":                                     { type: Result_BuiltinFunction, val: mul },
+
+	"draw_set_transform": { type: Result_BuiltinFunction, val: draw_set_transform },
+	"draw_set_color":     { type: Result_BuiltinFunction, val: draw_set_color },
+	"draw_line":          { type: Result_BuiltinFunction, val: draw_line_wrapper },
+	"draw_set_font_size": { type: Result_BuiltinFunction, val: draw_set_font_size },
+	"draw_circle":        { type: Result_BuiltinFunction, val: draw_circle },
+	"draw_square":        { type: Result_BuiltinFunction, val: draw_square },
+	"draw_rect":          { type: Result_BuiltinFunction, val: draw_rect },
+	"draw_label":         { type: Result_BuiltinFunction, val: draw_label },
+	"draw_background":    { type: Result_BuiltinFunction, val: draw_background },
+
+	// Animations
+	// TODO: this function tells the interpreter to stop rendering stuff, present a frame, clear the stuff we drew, then continue interpreting.
+	// But we need an iterative version of the program runner instead of the for-loop version!
+	// "draw_frame":           { type: Result_BuiltinFunction, val: draw_frame },
+
+	// Very simple API. This means that consumers will need to validate the outputs
+	"plot_new":         { type: Result_BuiltinFunction, val: plot_new },
+	"plot_value":       { type: Result_BuiltinFunction, val: plot_value },
+
+	// Debug/introspection
+	"expr_to_string":      { type: Result_BuiltinFunction, val: expr_to_string },
+	"expr_type_to_string": { type: Result_BuiltinFunction, val: expr_type_to_string },
+	"to_string":           { type: Result_BuiltinFunction, val: to_string },
+	"type_to_string":      { type: Result_BuiltinFunction, val: type_to_string },
+
+	// Datastructures
+	"len":   { type: Result_BuiltinFunction, val: len },
+	"push":  { type: Result_BuiltinFunction, val: push },
+	"join":  { type: Result_BuiltinFunction, val: join },
+
+	// Maths
+	"max":   { type: Result_BuiltinFunction, val: math_max },
+	"min":   { type: Result_BuiltinFunction, val: math_min },
+	"clamp": { type: Result_BuiltinFunction, val: math_clamp },
+	"sin":   { type: Result_BuiltinFunction, val: math_sin },
+	"cos":   { type: Result_BuiltinFunction, val: math_cos },
+	"tan":   { type: Result_BuiltinFunction, val: math_tan },
+	"asin":  { type: Result_BuiltinFunction, val: math_asin },
+	"acos":  { type: Result_BuiltinFunction, val: math_acos },
+	"atan":  { type: Result_BuiltinFunction, val: math_atan },
+	"atan2": { type: Result_BuiltinFunction, val: math_atan2 },
+	"log2":  { type: Result_BuiltinFunction, val: math_log2 },
+	"ln":    { type: Result_BuiltinFunction, val: math_ln },
+	"pow":   { type: Result_BuiltinFunction, val: math_pow },
+	"sqrt":  { type: Result_BuiltinFunction, val: math_sqrt },
+
+	"PI": newNumber(Math.PI),
+	"E":  newNumber(Math.E),
+
+	"random":           { type: Result_BuiltinFunction, val: random },
+	"random_set_seed":  { type: Result_BuiltinFunction, val: random_set_seed },
+}
+
+export function println(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	print(fn, iter);
+	iter.printOutputs.push("\n");
+	return RETURN_NONE;
+}
 export function print(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
-	const sb: string[] = [];
 	for (let i = 0; i < fn.arguments.length; i++) {
 		const expr = fn.arguments[i];
 
@@ -1463,10 +1617,32 @@ export function print(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
 			message = resultToString(iter.lastResult.result);
 		}
 
-		sb.push(message);
+		iter.printOutputs.push(message);
 	}
 
-	iter.logOutputs.push({ expr: fn, text: sb.join(" ") });
+	return RETURN_NONE;
+}
+
+export function log(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	for (let i = 0; i < fn.arguments.length; i++) {
+		const expr = fn.arguments[i];
+
+		evaluateExpression(expr, iter);
+
+		let message;
+		if (iter.lastResult.error) {
+			message = iter.lastResult.error.message;
+		} else {
+			message = resultToString(iter.lastResult.result);
+		}
+
+		iter.logOutputs.push({
+			expr:   expr,
+			text:   message,
+			result: cloneResultIfValueSemantics(iter.lastResult.result),
+		});
+	}
+
 	return RETURN_NONE;
 }
 
@@ -1662,6 +1838,22 @@ export function math_sqrt(call: ast.FunctionCall, iter: ProgramIterator): ExprRe
 	const val = evaluateNumber(call.arguments[0], iter)
 	if (!val) return RETURN_ERROR;
 	return setResultNumber(iter, Math.sqrt(val.val));
+}
+
+export function random(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (!checkNumArgs(call, 0, iter)) return RETURN_ERROR;
+	const val = getNextRng(iter.rng);
+	return setResultNumber(iter, val);
+}
+
+export function random_set_seed(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (!checkNumArgs(call, 1, iter)) return RETURN_ERROR;
+
+	const val = evaluateNumber(call.arguments[0], iter)
+	if (!val) return RETURN_ERROR;
+
+	setRngSeed(iter.rng, val.val);
+	return RETURN_NONE;
 }
 
 export function mul(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
@@ -2202,71 +2394,6 @@ function setExpectedValueTypeError(iter: ProgramIterator, expr: ast.Expression, 
 	);
 }
 
-export const builtins: Record<string, Result> = {
-	// Constants
-	"nothing":    NOTHING, 
-
-	// Output
-	"print": { type: Result_BuiltinFunction, val: print },
-
-	// Matrices/Vectors
-	"matrix_transform_cartesian":                     { type: Result_BuiltinFunction, val: matrix_transform_cartesian },
-	"matrix_transform_3d_pos_target_up_fov":          { type: Result_BuiltinFunction, val: matrix_transform_3d_pos_target_up_fov },
-	"matrix_transform_3d_pos_target_up_width_height": { type: Result_BuiltinFunction, val: matrix_transform_3d_pos_target_up_width_height },
-	"matrix_transpose":                               { type: Result_BuiltinFunction, val: transpose },
-	"matrix_inverse":                                 { type: Result_BuiltinFunction, val: inverse },
-	"vector_len":                                     { type: Result_BuiltinFunction, val: vector_len },
-	"vector_dot":                                     { type: Result_BuiltinFunction, val: vector_dot },
-	"vector_cross":                                   { type: Result_BuiltinFunction, val: vector_cross },
-	"mul":                                            { type: Result_BuiltinFunction, val: mul },
-	"matrix_mul":                                     { type: Result_BuiltinFunction, val: mul },
-
-	"draw_set_transform": { type: Result_BuiltinFunction, val: draw_set_transform },
-	"draw_set_color":     { type: Result_BuiltinFunction, val: draw_set_color },
-	"draw_line":          { type: Result_BuiltinFunction, val: draw_line_wrapper },
-	"draw_set_font_size": { type: Result_BuiltinFunction, val: draw_set_font_size },
-	"draw_circle":        { type: Result_BuiltinFunction, val: draw_circle },
-	"draw_square":        { type: Result_BuiltinFunction, val: draw_square },
-	"draw_rect":          { type: Result_BuiltinFunction, val: draw_rect },
-	"draw_label":         { type: Result_BuiltinFunction, val: draw_label },
-	"draw_background":    { type: Result_BuiltinFunction, val: draw_background },
-
-	// Animations
-	// TODO: this function tells the interpreter to stop rendering stuff, present a frame, clear the stuff we drew, then continue interpreting.
-	// But we need an iterative version of the program runner instead of the for-loop version!
-	// "draw_frame":           { type: Result_BuiltinFunction, val: draw_frame },
-
-	// Very simple API. This means that consumers will need to validate the outputs
-	"plot_new":         { type: Result_BuiltinFunction, val: plot_new },
-	"plot_value":       { type: Result_BuiltinFunction, val: plot_value },
-
-	// Debug/introspection
-	"expr_to_string":      { type: Result_BuiltinFunction, val: expr_to_string },
-	"expr_type_to_string": { type: Result_BuiltinFunction, val: expr_type_to_string },
-	"to_string":           { type: Result_BuiltinFunction, val: to_string },
-	"type_to_string":      { type: Result_BuiltinFunction, val: type_to_string },
-
-	// Datastructures
-	"len":   { type: Result_BuiltinFunction, val: len },
-	"push":  { type: Result_BuiltinFunction, val: push },
-	"join":  { type: Result_BuiltinFunction, val: join },
-
-	// Maths
-	"max":   { type: Result_BuiltinFunction, val: math_max },
-	"min":   { type: Result_BuiltinFunction, val: math_min },
-	"clamp": { type: Result_BuiltinFunction, val: math_clamp },
-	"sin":   { type: Result_BuiltinFunction, val: math_sin },
-	"cos":   { type: Result_BuiltinFunction, val: math_cos },
-	"tan":   { type: Result_BuiltinFunction, val: math_tan },
-	"asin":  { type: Result_BuiltinFunction, val: math_asin },
-	"acos":  { type: Result_BuiltinFunction, val: math_acos },
-	"atan":  { type: Result_BuiltinFunction, val: math_atan },
-	"atan2": { type: Result_BuiltinFunction, val: math_atan2 },
-	"log2":  { type: Result_BuiltinFunction, val: math_log2 },
-	"ln":    { type: Result_BuiltinFunction, val: math_ln },
-	"pow":   { type: Result_BuiltinFunction, val: math_pow },
-	"sqrt":  { type: Result_BuiltinFunction, val: math_sqrt },
-}
 
 export function getBuiltin(name: string): Result | undefined {
 	return builtins[name];

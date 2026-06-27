@@ -113,17 +113,17 @@ function testEqualResult(r: TestResult, got: pl2.Result, wanted: pl2.Result, mes
 }
 
 function testEqualLogs(r: TestResult, result: pl2.ProgramIterator, expected: string[]) {
-	if (!testEqual(r, result.logOutputs.length, expected.length)) {
+	if (!testEqual(r, result.printOutputs.length, expected.length)) {
 		testFailure(r, "Logs: ");
-		for (const log of result.logOutputs) {
-			testFailure(r, log.text);
+		for (const log of result.printOutputs) {
+			testFailure(r, log);
 		}
 		return;
 	}
 
 	for (let i = 0; i < expected.length; i++) {
 		const line = expected[i];
-		const got = result.logOutputs[i].text;
+		const got = result.printOutputs[i];
 		testEqual(r, got, line, "line " + i);
 	}
 }
@@ -432,8 +432,7 @@ addTestGroup("Builtin functions", [pl2.builtins], () => {
 			print(1 + 1)
 		`);
 
-		testEqual(r, result.logOutputs.length, 1);
-		testEqual(r, result.logOutputs[0].text, "2");
+		testEqualLogs(r, result, ["2"]);
 	});
 
 	addAllTestCases([
@@ -585,11 +584,11 @@ addTestGroup("For-Loops", [], () => {
 		}, {
 			name: "iterate list - 1 val",
 			code: `l = list{10, 20, 30} for x, i in l { print(x, i)}`,
-			expected: [ "10 0", "20 1", "30 2", ]
+			expected: [ "10", "0", "20", "1", "30", "2", ]
 		}, {
 			name: "iterate map",
 			code: `m = map{1=21, 2=32, 3=44} for k, v in m { print(k, v) }`,
-			expected: [ "1 21", "2 32", "3 44", ]
+			expected: [ "1", "21", "2", "32", "3", "44", ]
 		}
 	];
 
@@ -618,13 +617,13 @@ addTestGroup("More complicated programs", [], () => {
 			`);
 
 			testEqualLogs(r, result, [
-				"3 fizz",
-				"5 buzz",
-				"6 fizz",
-				"9 fizz",
-				"10 buzz",
-				"12 fizz",
-				"15 fizzbuzz",
+				"3", "fizz",
+				"5", "buzz",
+				"6", "fizz",
+				"9", "fizz",
+				"10", "buzz",
+				"12", "fizz",
+				"15", "fizzbuzz",
 			]);
 		});
 
@@ -645,13 +644,13 @@ addTestGroup("More complicated programs", [], () => {
 
 			testEqual(r, result.lastResult.error, undefined);
 			testEqualLogs(r, result, [
-				"3 fizz",
-				"5 buzz",
-				"6 fizz",
-				"9 fizz",
-				"10 buzz",
-				"12 fizz",
-				"15 fizzbuzz",
+				"3", "fizz",
+				"5", "buzz",
+				"6", "fizz",
+				"9", "fizz",
+				"10", "buzz",
+				"12", "fizz",
+				"15", "fizzbuzz",
 			]);
 		});
 
@@ -673,13 +672,13 @@ addTestGroup("More complicated programs", [], () => {
 			`);
 
 			testEqualLogs(r, result, [
-				"3 fizz",
-				"5 buzz",
-				"6 fizz",
-				"9 fizz",
-				"10 buzz",
-				"12 fizz",
-				"15 fizzbuzz",
+				"3", "fizz",
+				"5", "buzz",
+				"6", "fizz",
+				"9", "fizz",
+				"10", "buzz",
+				"12", "fizz",
+				"15", "fizzbuzz",
 			]);
 		});
 	});
@@ -786,9 +785,9 @@ addTestGroup("Indexing", [], () => {
 			`);
 
 			testEqualLogs(r, result, [
-				"1 12",
-				"2 25",
-				"4 12",
+				"1", "12",
+				"2", "25",
+				"4", "12",
 			]);
 		});
 
@@ -1036,70 +1035,53 @@ addTestGroup("Indexing", [], () => {
 	});
 });
 
-addTestGroup("Control 2low", [], () => {
-	addTest("return top level", r => {
-		const result = pl2.interpretCode(`
-			print(1)
-			return nothing
-			print(2)
-			print(3)
-		`);
-		testEqualLogs(r, result, ["1"]);
-	});
-
-	addTest("return in a function", r => {
-		const result = pl2.interpretCode(`
-			fn test() {
+addTestGroup("Control flow", [], () => {
+	addTestGroup("return", [], () => {
+		addTest("return top level", r => {
+			const result = pl2.interpretCode(`
 				print(1)
 				return nothing
 				print(2)
 				print(3)
-			}
-			test()
-		`);
-		testEqualLogs(r, result, ["1"]);
-	});
+			`);
+			testEqualLogs(r, result, ["1"]);
+		});
 
-	addTest("return in a function should not return outer function", r => {
-		const result = pl2.interpretCode(`
-			fn test() {
-				print(1)
-				return nothing
-				print(2)
-				print(3)
-			}
-			fn test2() {
-				test()
-				print(4)
-			}
-			test2()
-		`);
-		testEqualLogs(r, result, ["1", "4"]);
-	});
-
-
-	addTest("return in an if-statement", r => {
-		const result = pl2.interpretCode(`
-			fn test() {
-				if true {
+		addTest("return in a function", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
 					print(1)
 					return nothing
 					print(2)
 					print(3)
 				}
-				print(5)
-			}
-			test()
-			print(6)
-		`);
-		testEqualLogs(r, result, ["1", "6"]);
-	});
+				test()
+			`);
+			testEqualLogs(r, result, ["1"]);
+		});
 
-	addTest("return in an if-statement in a for loop", r => {
-		const result = pl2.interpretCode(`
-			fn test() {
-				if true {
-					for i in 0..<10 {
+		addTest("return in a function should not return outer function", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					print(1)
+					return nothing
+					print(2)
+					print(3)
+				}
+				fn test2() {
+					test()
+					print(4)
+				}
+				test2()
+			`);
+			testEqualLogs(r, result, ["1", "4"]);
+		});
+
+
+		addTest("return in an if-statement", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					if true {
 						print(1)
 						return nothing
 						print(2)
@@ -1107,19 +1089,58 @@ addTestGroup("Control 2low", [], () => {
 					}
 					print(5)
 				}
-				print(5)
-			}
-			test()
-		`);
-		testEqualLogs(r, result, ["1"]);
-	});
+				test()
+				print(6)
+			`);
+			testEqualLogs(r, result, ["1", "6"]);
+		});
 
-	addTest("return in an if-statement in a for loop in a return block", r => {
-		const result = pl2.interpretCode(`
-			fn test() {
-				if true {
+		addTest("return in an if-statement in a for loop", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					if true {
+						for i in 0..<10 {
+							print(1)
+							return nothing
+							print(2)
+							print(3)
+						}
+						print(5)
+					}
+					print(5)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, ["1"]);
+		});
+
+		addTest("return in an if-statement in a for loop in a return block", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					if true {
+						for i in 0..<10 {
+							return {
+								print(1)
+								return nothing
+								print(2)
+								print(3)
+							}
+							print(4)
+						}
+						print(5)
+					}
+					print(5)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, ["1"]);
+		});
+
+		addTest("return in an for loop in a for loop in a return block", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
 					for i in 0..<10 {
-						return {
+						for i in 0..<10 {
 							print(1)
 							return nothing
 							print(2)
@@ -1129,48 +1150,202 @@ addTestGroup("Control 2low", [], () => {
 					}
 					print(5)
 				}
-				print(5)
-			}
-			test()
-		`);
-		testEqualLogs(r, result, ["1"]);
-	});
+				test()
+			`);
+			testEqualLogs(r, result, ["1"]);
+		});
 
-	addTest("return in an for loop in a for loop in a return block", r => {
-		const result = pl2.interpretCode(`
-			fn test() {
-				for i in 0..<10 {
-					for i in 0..<10 {
-						print(1)
-						return nothing
-						print(2)
-						print(3)
-					}
-					print(4)
-				}
-				print(5)
-			}
-			test()
-		`);
-		testEqualLogs(r, result, ["1"]);
-	});
-
-	addTest("return in an if in an if in a return block", r => {
-		const result = pl2.interpretCode(`
-			fn test() {
-				if true {
+		addTest("return in an if in an if in a return block", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
 					if true {
+						if true {
+							print(1)
+							return nothing
+							print(2)
+							print(3)
+						}
+						print(4)
+					}
+					print(5)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, ["1"]);
+		});
+	});
+
+	addTestGroup("continue", [], () => {
+		addTest("continue top level", r => {
+			const result = pl2.interpretCode(`
+				print(1)
+				continue
+				print(2)
+				print(3)
+			`);
+			testEqualError(r, result, "continue not allowed outside of a loop")
+			testEqualLogs(r, result, ["1"]);
+		});
+
+		addTest("continue in a function", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					print(1)
+					continue
+					print(2)
+					print(3)
+				}
+				test()
+			`);
+			testEqualError(r, result, "continue not allowed outside of a loop")
+			testEqualLogs(r, result, ["1"]);
+		});
+
+
+		addTest("continue in a for loop", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					for i in 0..<3 {
 						print(1)
-						return nothing
+						continue
 						print(2)
 						print(3)
 					}
-					print(4)
+					print(5)
 				}
-				print(5)
-			}
-			test()
-		`);
-		testEqualLogs(r, result, ["1"]);
+				test()
+			`);
+			testEqualLogs(r, result, ["1", "1", "1", "5"]);
+		});
+
+		addTest("continue in an if-statement in a for loop", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					for i in 0..<3 {
+						if true {
+							print(1)
+							continue
+							print(2)
+							print(3)
+						}
+					}
+					print(5)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, ["1", "1", "1", "5"]);
+		});
+
+		addTest("continue in an for loop in a for loop", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					for j in 1..<=2 {
+						for i in 0..<3 {
+							print(j)
+							continue
+							print(2)
+							print(3)
+						}
+						print(4)
+					}
+					print(5)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, [
+				"1", "1", "1",
+				"4",
+				"2", "2", "2",
+				"4",
+				"5",
+			]);
+		});
+	});
+
+	addTestGroup("break", [], () => {
+		addTest("break top level", r => {
+			const result = pl2.interpretCode(`
+				print(1)
+				break
+				print(2)
+				print(3)
+			`);
+			testEqualError(r, result, "break not allowed outside of a loop")
+			testEqualLogs(r, result, ["1"]);
+		});
+
+		addTest("break in a function", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					print(1)
+					break
+					print(2)
+					print(3)
+				}
+				test()
+			`);
+			testEqualError(r, result, "break not allowed outside of a loop")
+			testEqualLogs(r, result, ["1"]);
+		});
+
+
+		addTest("break in a for loop", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					for i in 0..<3 {
+						print(1)
+						break
+						print(2)
+						print(3)
+					}
+					print(5)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, ["1", "5"]);
+		});
+
+		addTest("break in an if-statement in a for loop", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					for i in 0..<3 {
+						if true {
+							print(1)
+							break
+							print(2)
+							print(3)
+						}
+					}
+					print(5)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, ["1", "5"]);
+		});
+
+		addTest("break in a for loop in a for loop", r => {
+			const result = pl2.interpretCode(`
+				fn test() {
+					for j in 1..<=2 {
+						for i in 0..<3 {
+							print(j)
+							break
+							print(20)
+							print(30)
+						}
+						print(40)
+					}
+					print(50)
+				}
+				test()
+			`);
+			testEqualLogs(r, result, [
+				"1", 
+				"40",
+				"2", 
+				"40",
+				"50",
+			]);
+		});
 	});
 });

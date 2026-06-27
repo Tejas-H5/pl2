@@ -104,6 +104,8 @@ export function addTest(name: string, fn: ((r: TestResult) => void), g?: TestGro
 		//		{ name: "blah", case: ..., expected: ... },
 		// ])
 		// And if I just want to run a single test, I add [debug] to the name itself.
+		// Importantly, we don't run any other tests when you've selected some tests for debug.
+		// That way, you know your console-logs and breakpoints are actually valid
 		isDebugging: name.startsWith("[debug]"), 
 	};
 
@@ -360,7 +362,7 @@ export function printResults(results: TestContext) {
 	} else if (mode === MODE_FAILING) {
 		console.log("Some tests are failing:");
 	} else if (mode === MODE_FAILING_SUMMARY) {
-		console.log(`A LOT of tests are failing (${numFails}) - islotate a test by naming it "[debug] ..."`);
+		console.log(`A LOT of tests are failing (${numFails}) - islotate a test for debug by naming it "[debug] ..."`);
 	} else if (mode === MODE_ALL_PASSING) {
 		console.log("All passing");
 	}

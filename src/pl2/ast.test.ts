@@ -200,6 +200,18 @@ addTestGroup("Return statement block", [ast.parseAnyReturnStatement], () => {
 	});
 });
 
+addTestGroup("Continue and break statements", [ast.parseAnyReturnStatement], () => {
+	addTest("continue", r => {
+		const expr = ast.parseExpressionFromText("continue");
+		testAssert(r, expr?.type === ast.Expression_Continue);
+	});
+
+	addTest("break", r => {
+		const expr = ast.parseExpressionFromText("break");
+		testAssert(r, expr?.type === ast.Expression_Break);
+	});
+});
+
 addTestGroup("Binary expressions", [ast.parseExpression, ast.parseBinaryExpression], () => {
 	addTest("add", r => {
 		const expr = ast.parseExpressionFromText("a + b");
