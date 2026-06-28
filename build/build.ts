@@ -76,7 +76,7 @@ const commonBuildOptions: esbuild.BuildOptions = {
 	bundle: true,
 	minifyWhitespace: false,
 	minifyIdentifiers: false,
-	minifySyntax: true,
+	minifySyntax: false,
 	treeShaking: true,
 	define: Object.fromEntries(
 		Object

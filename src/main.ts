@@ -22,6 +22,15 @@ import {
 	imVSpace
 } from "ui-primitives";
 import { imHandleTextAreaEvent, imTextAreaBegin, imTextAreaEnd } from "/im-ui/editable-text-area";
+import { assert } from "assert";
+import { newParser } from "pl2/parser";
+import { DataOutput } from "pl2/interpreter";
+import { imC2dBegin, imC2dEnd } from "im-ui/im-canvas2d";
+import * as c2d from "dom-utils/canvas2d";
+
+const ctx: AppContext = {
+	cellResults: [],
+};
 
 const c: ImCache = []
 imMain(c);
@@ -40,6 +49,22 @@ function imMain(c: ImCache) {
 type AppState = {
 	cells: CodeCellState[];
 }
+
+type AppContext = {
+	cellResults: CodeCellOutput[];
+};
+
+type CodeCellOutput = {
+	iter:         pl2.ProgramIterator;
+
+	environment: {
+		width:  number;
+		height: number;
+	};
+
+	evaluateTime:   number;
+	canvasDrawTime: number;
+};
 
 function loadState(): AppState | undefined {
 	const val = localStorage.getItem("state");
@@ -115,12 +140,27 @@ function imApp(c: ImCache) {
 
 	let deferredEvent: (() => void) | undefined;
 
+	let shouldRecompute = false;
+
 	im.For(c); for (let idx = 0; idx < state.cells.length; idx++) {
-		const cellState = state.cells[idx];
+		const outputs = ctx.cellResults;
+		if (idx === outputs.length) {
+			outputs.push({
+				iter: pl2.interpretCode(""),
+				environment: {
+					width:  0,
+					height: 0,
+				},
+				evaluateTime: 0,
+				canvasDrawTime: 0,
+			});
+		}
 
-		imCodeCell(c, cellState);
+		const cellState       = state.cells[idx];
+		const cellStateOutput = outputs[idx];
+		imCodeCell(c, cellState, cellStateOutput);
 
-		imVSpace(c, cssVars.bg)
+		imVSpace(c, cssVars.bg);
 
 		imBegin(c, ROW, CENTER, CENTER); {
 			imButtonBegin(c, ROW); {
@@ -150,6 +190,7 @@ function imApp(c: ImCache) {
 
 		if (im.Memo(c, cellState.codeVersion)) {
 			saveStateDebounced(state);
+			shouldRecompute = true;
 		}
 	} im.ForEnd(c);
 
@@ -158,7 +199,6 @@ function imApp(c: ImCache) {
 			imButtonBegin(c, ROW); {
 				imStr(c, "+"); 
 				if (imdom.hasMousePress(c)) {
-					console.log("hi")
 					deferredEvent = () => {
 						state.cells.push(newCodeCellState());
 						saveStateDebounced(state);
@@ -171,29 +211,52 @@ function imApp(c: ImCache) {
 	if (deferredEvent) {
 		deferredEvent();
 	}
+
+	if (shouldRecompute) {
+		recocmputeCells(state);
+	}
+}
+
+function recocmputeCells(state: AppState) {
+	for (let idx = 0; idx < state.cells.length; idx++) {
+		const cell   = state.cells[idx];
+		const result = ctx.cellResults[idx];
+		assert(!!cell);
+		assert(!!result);
+
+		const environment = new Map<string, pl2.Result>([
+			["screen_width",  pl2.newNumber(result.environment.width)],
+			["screen_height", pl2.newNumber(result.environment.height)],
+		]);
+
+		if (idx === 0) {
+			const t0                          = performance.now();
+			ctx.cellResults[idx].iter         = pl2.interpretCode(cell.code, environment);
+			ctx.cellResults[idx].evaluateTime = performance.now() - t0;
+		} else {
+			// Preserve vars from previous cell.
+
+			const parser     = newParser(cell.code);
+			const program    = ast.parseProgram(parser);
+			const prevResult = ctx.cellResults[idx - 1];
+
+			const result = pl2.newProgramIterator(program, environment);
+			for (const [k, v] of prevResult.iter.scopes[0].vars) {
+				pl2.setOrCreateVar(result, k, v);
+			}
+
+			const t0                          = performance.now();
+			ctx.cellResults[idx].iter         = result;
+			pl2.interpretProgram(program, result)
+			ctx.cellResults[idx].evaluateTime = performance.now() - t0;
+		}
+	}
 }
 
 type CodeCellState = {
 	code:        string;
 	codeVersion: number;
 };
-
-function parseIntOrZero(text: string | null | undefined): number {
-	if (!text) {
-		return 0;
-	}
-
-	let val = parseInt(text);
-	if (Number.isNaN(val)) {
-		return 0;
-	}
-
-	return val;
-}
-
-function getCellKey(cellBucket: string, idx: number): string {
-	return cellBucket + "-" + idx;
-}
 
 function newCodeCellState(): CodeCellState {
 	return {
@@ -202,7 +265,7 @@ function newCodeCellState(): CodeCellState {
 	};
 }
 
-function imCodeCell(c: ImCache, state: CodeCellState): CodeCellState {
+function imCodeCell(c: ImCache, state: CodeCellState, output: CodeCellOutput): CodeCellState {
 	imBegin(c, ROW); {
 		if (im.isFirstishRender(c)) {
 			imdom.setStyle(c, "maxHeight", "80vh");
@@ -222,7 +285,7 @@ function imCodeCell(c: ImCache, state: CodeCellState): CodeCellState {
 		imHSpace(c, cssVars.bg);
 
 		imBegin(c, COL); imFlex(c); {
-			imCodeOutput(c, state.code, state.codeVersion);
+			imCodeOutput(c, output);
 		} imEnd(c);
 	} imEnd(c);
 
@@ -250,19 +313,18 @@ function imCodeEditor(c: ImCache, code: string): CodeEditorEv | undefined {
 	return result;
 }
 
-function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
-	const output = im.GetInline(c, imApp) ?? im.Set(c, {
-		val:      pl2.interpretCode(""),
-		evalTime: 0,
-	});
-
-	if (im.Memo(c, codeVersion)) {
-		const t0        = performance.now();
-		output.val      = pl2.interpretCode(code);
-		output.evalTime = performance.now() - t0;
+function imCodeOutput(c: ImCache, output: CodeCellOutput) {
+	// We'll need this to know the sizes of UI elements before we've ever drawn them.
+	// Alternatively, we can just interpret the program once, figure out which UI elements it needs, get the 
+	// sizes from the DOM, and re-interpret the programs. I have decided to avoid this route for performance reasons.
+	const columnWidth = imdom.getElement(c).clientWidth;
+	if (im.Memo(c, columnWidth)) {
+		output.environment.width  = columnWidth * window.devicePixelRatio;
+		output.environment.height = columnWidth * window.devicePixelRatio / getDesiredAspectRatio();
 	}
 
-	const interpretResult = output.val;
+	const interpretResult = output.iter;
+	const code            = output.iter.program.code;
 
 	if (im.If(c) && interpretResult.errors.length > 0) {
 		im.For(c); for (const err of interpretResult.errors) {
@@ -287,13 +349,17 @@ function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
 	} else if (im.ElseIf(c)) {
 		// imStr(c, "Ran in "); imStr(c, Math.round(output.evalTime)); imStr(c, "ms");
 
-		if (im.If(c) && interpretResult.printOutputs.length > 0) {
-			imCodeBegin(c); {
-				im.For(c); for (const p of interpretResult.printOutputs) {
+		imCodeBegin(c); {
+			im.For(c); 
+			if (interpretResult.printOutputs.length > 0) {
+				for (const p of interpretResult.printOutputs) {
 					imStr(c, p);
-				} im.ForEnd(c);
-			} imCodeEnd(c);
-		} im.IfEnd(c);
+				} 
+			} else {
+				imStr(c, "No output");
+			}
+			im.ForEnd(c);
+		} imCodeEnd(c);
 
 		const globalVars = interpretResult.scopes[0].vars;
 		if (im.If(c) && globalVars.size > 0) {
@@ -328,52 +394,130 @@ function imCodeOutput(c: ImCache, code: string, codeVersion: number) {
 			} im.ForEnd(c)
 		} im.IfEnd(c);
 
+		if (im.If(c) && interpretResult.drawCalls.length > 0) {
+			imVDivider(c);
+			
+			imSubHeading(c, "Drawing");
+			imDrawCalls(c, output);
+			imStr(c, "Rendered in "); imStr(c, Math.round(output.canvasDrawTime)); imStr(c, "ms");
+		} im.IfEnd(c);
+
 		if (im.If(c) && interpretResult.dataOutputs.length > 0) {
 			im.For(c); for (const output of interpretResult.dataOutputs) {
 				imSubHeading(c, output.title);
-				imBegin(c, BLOCK); {
-					if (im.Memo(c, output.axes.length)) {
-						imdom.setStyle(c, "display", "grid");
-						imdom.setStyle(c, "gridTemplateColumns", "1fr ".repeat(output.axes.length));
-					}
 
-					im.For(c); for (const axis of output.axes) {
-						imBegin(c, BLOCK); imB(c); {
-							imStr(c, axis.name);
-						} imEnd(c);
-					} im.ForEnd(c);
-
-					let numDataPoints = 0;
-					for (const axis of output.axes) {
-						numDataPoints = Math.max(numDataPoints, axis.numbers.length);
-					}
-
-					im.For(c); 
-					for (let idx = 0; idx < numDataPoints; idx++) {
-						for (let axisIdx = 0; axisIdx < output.axes.length; axisIdx++) {
-
-							const axis = output.axes[axisIdx];
-
-							let value = "-";
-							if (idx < axis.numbers.length) {
-								const num = axis.numbers[idx];
-								if (axis.labels) {
-									value = axis.labels[num];
-								} else {
-									value = "" + num;
-								}
-							}
-
-							imBegin(c, BLOCK); {
-								imStr(c, value);
-							} imEnd(c);
-
-						}
-					}
-					im.ForEnd(c);
-				} imEnd(c);
+				if (im.If(c) && output.axes.length === 2) {
+					imPointsPlot(c, output);
+				} else {
+					im.Else(c);
+					// A table is great way to visualise data when we have no clue how to visualise the data
+					imTable(c, output);
+				} im.IfEnd(c);
 			} im.ForEnd(c);
 		} im.IfEnd(c);
 	} im.IfEnd(c);
+}
 
+function imTable(c: ImCache, output: DataOutput) {
+	imBegin(c, BLOCK); {
+		if (im.Memo(c, output.axes.length)) {
+			imdom.setStyle(c, "display", "grid");
+			imdom.setStyle(c, "gridTemplateColumns", "1fr ".repeat(output.axes.length));
+		}
+
+		im.For(c); for (const axis of output.axes) {
+			imBegin(c, BLOCK); imB(c); {
+				imStr(c, axis.name);
+			} imEnd(c);
+		} im.ForEnd(c);
+
+		let numDataPoints = 0;
+		for (const axis of output.axes) {
+			numDataPoints = Math.max(numDataPoints, axis.numbers.length);
+		}
+
+		im.For(c);
+		for (let idx = 0; idx < numDataPoints; idx++) {
+			for (let axisIdx = 0; axisIdx < output.axes.length; axisIdx++) {
+
+				const axis = output.axes[axisIdx];
+				let value = "-";
+				if (idx < axis.numbers.length) {
+					const num = axis.numbers[idx];
+					if (axis.labels) {
+						value = axis.labels[num];
+					} else {
+						value = "" + num;
+					}
+				}
+
+				imBegin(c, BLOCK); {
+					imStr(c, value);
+				} imEnd(c);
+
+			}
+		}
+		im.ForEnd(c);
+	} imEnd(c);
+}
+
+function imDrawCalls(c: ImCache, output: CodeCellOutput) {
+	const drawCalls = output.iter.drawCalls;
+
+	const s = imC2dBegin(c, getDesiredAspectRatio());
+	if (s) {
+		if (im.Memo(c, drawCalls)) {
+			const t0 = performance.now();
+
+			c2d.setColor(s, 1, 1, 1, 1);
+			c2d.drawBackground(s);
+			c2d.setFont(s, "Inter", 20);
+			c2d.setColor(s, 0, 0, 0, 1);
+
+			for (let i = 0; i < drawCalls.length; i++) {
+				const call = drawCalls[i];
+
+				switch (call.type) {
+					case pl2.DrawCall_Line: {
+						c2d.drawLine(s, call.p0[0], call.p0[1], call.p1[0], call.p1[1], call.thickness);
+					} break;
+					case pl2.DrawCall_Circle: {
+						c2d.drawCircle(s, call.p0[0], call.p0[1], call.radius);
+					} break;
+					case pl2.DrawCall_Square: {
+						c2d.drawSquare(s, call.p0[0], call.p0[1], call.radius);
+					} break;
+					case pl2.DrawCall_Rectangle: {
+						c2d.drawRect(s, call.p0[0], call.p0[1], call.p1[0], call.p1[1]);
+					} break;
+					case pl2.DrawCall_Background: {
+						c2d.drawBackground(s);
+					} break;
+					case pl2.DrawCall_Label: {
+						c2d.setFont(s, s.fontName, call.size);
+						c2d.drawLabel(
+							s,
+							call.p0[0], call.p0[1],
+							call.text,
+							call.direction[0], call.direction[1],
+							s.fontSizePx / 5
+						);
+					} break;
+				}
+			}
+
+			output.canvasDrawTime = performance.now() - t0;
+		}
+	} imC2dEnd(c, s);
+}
+
+function getDesiredAspectRatio(): number {
+	return window.innerWidth / window.innerHeight;
+}
+
+function imPointsPlot(c: ImCache, output: pl2.DataOutput) {
+	const s = imC2dBegin(c, getDesiredAspectRatio());
+	if (s) {
+		c2d.drawLine(s, 0, 0, s.width, s.height, 1);
+	} imC2dEnd(c, s);
 }

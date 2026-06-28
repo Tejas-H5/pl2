@@ -153,6 +153,8 @@ export type ProgramIterator = {
 	nextStatementIdx: number;
 
 	stack:  ast.Expression[];
+
+	environmentVariables: Map<string, Result> | undefined;
 	scopes: Scope[];
 
 	lastResult: {
@@ -216,6 +218,7 @@ export const DrawCall_Square     = 2;
 export const DrawCall_Rectangle  = 3;
 export const DrawCall_Background = 4;
 export const DrawCall_Label      = 5;
+export const DrawCall_SetColor   = 6;
 
 export type DrawCallBase = {
 	type:  number;
@@ -226,7 +229,7 @@ export type DrawLine = DrawCallBase & {
 	type: typeof DrawCall_Line;
 	p0:   vector.Vec3;
 	p1:   vector.Vec3;
-	radius: number;
+	thickness: number;
 };
 
 export type DrawCircle = DrawCallBase & {
@@ -254,6 +257,11 @@ export type DrawLabel = DrawCallBase & {
 	size:      number;
 	direction: vector.Vec3;
 };
+
+export type DrawSetColor = DrawCallBase & {
+	type: typeof DrawCall_SetColor;
+	color: Color;
+}
 
 export type DrawBackground = DrawCallBase & {
 	type: typeof DrawCall_Background;
@@ -303,18 +311,22 @@ export const SCOPE_ISOLATED             = 1 << 1;
 export const SCOPE_HIDDEN               = 1 << 2; 
 export const SCOPE_NON_ISOLATED_FLAGS = SCOPE_ALLOW_CONTINUE_BREAK;
 
-export function newProgramIterator(program: ast.Program): ProgramIterator {
-	return {
+export function newProgramIterator(program: ast.Program, environment?: Map<string, Result>): ProgramIterator {
+	const iter: ProgramIterator = {
 		program: program,
 		errors:  [],
 
 		nextStatementIdx: 0,
+
+		stack:  [],
+
+		environmentVariables: environment,
+		scopes: [],
+
 		lastResult: {
 			result: NOTHING,
 			error:  undefined,
 		},
-		stack:  [],
-		scopes: [],
 
 		rng: newRandomNumberGenerator(),
 
@@ -334,6 +346,10 @@ export function newProgramIterator(program: ast.Program): ProgramIterator {
 		tempMatrix: matrix.create(4, 4),
 		tempMatrix2: matrix.create(4, 4),
 	};
+	// The root scope will never get popped.
+	pushScope(iter, 0); 
+	return iter;
+
 }
 
 export function pushScope(iter: ProgramIterator, flags: number): Scope {
@@ -363,6 +379,13 @@ export function getVar(iter: ProgramIterator, name: string): Result | undefined 
 	const builtin = getBuiltin(name);
 	if (builtin) {
 		return builtin;
+	}
+
+	if (iter.environmentVariables !== undefined) {
+		const dynamicBuiltin = iter.environmentVariables.get(name);
+		if (dynamicBuiltin !== undefined) {
+			return dynamicBuiltin;
+		}
 	}
 
 	if (iter.scopes.length === 0) return undefined;
@@ -413,7 +436,7 @@ export function forEachReachableScope(iter: ProgramIterator, fn: (scope: Scope) 
 	fn(iter.scopes[0])
 }
 
-export function setOrCreateVar(iter: ProgramIterator, name: string, val: Result){
+export function setOrCreateVar(iter: ProgramIterator, name: string, val: Result) {
 	if (iter.scopes.length === 0) return;
 
 	let scopeToUse: Scope | undefined;
@@ -479,21 +502,24 @@ export type ExprReturn =
 export function interpretProgram(program: ast.Program, iter: ProgramIterator) {
 	setRngSeed(iter.rng, 0);
 
-	// The root scope will never get popped.
-	pushScope(iter, 0); 
-
 	evaluateExpressionBlock(program.statements, iter);
 
 	assert(iter.scopes.length === 1);
 
-	return iter;
+	if (iter.lastResult.error) {
+		iter.errors.push({
+			expr:    iter.lastResult.error.expr,
+			pos:     iter.lastResult.error.expr.start,
+			message: iter.lastResult.error.message,
+		});
+	}
 }
 
-export function interpretCode(code: string): ProgramIterator {
+export function interpretCode(code: string, environment?: Map<string, Result>): ProgramIterator {
 	const parser = newParser(code);
 	const program = ast.parseProgram(parser);
 
-	const result = newProgramIterator(program);
+	const result = newProgramIterator(program, environment);
 
 	if (parser.errors.length > 0) {
 		for (const err of parser.errors) {
@@ -507,15 +533,6 @@ export function interpretCode(code: string): ProgramIterator {
 	} 
 
 	interpretProgram(program, result);
-
-	if (result.lastResult.error) {
-		result.errors.push({
-			expr:    result.lastResult.error.expr,
-			pos:     result.lastResult.error.expr.start,
-			message: result.lastResult.error.message,
-		});
-	}
-
 	return result;
 }
 
@@ -574,11 +591,11 @@ export function invalidOperatorError(opType: ast.BinaryOperatorType, lhs: Result
 
 // TODO: Don't end up with this - we need an alternative formulation that lets us step through the program.
 // It doesn't need to be an elaborate VM like last time - a simple control-flow graph is fine.
-export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator): ExprReturn {
+export function evaluateExpression(expr: ast.Expression, iter: ProgramIterator, canAssign = false): ExprReturn {
 	switch (expr.type) {
 		case ast.Expression_Identifier:         return evaluateIdentifier(expr, iter);
 		case ast.Expression_Indexer:            return evaluateIndexer(expr, iter);
-		case ast.Expression_BinaryExpression:   return evaluateBinaryOperation(expr, iter);
+		case ast.Expression_BinaryExpression:   return evaluateBinaryOperation(expr, iter, canAssign);
 		case ast.Expression_UnaryExpression:    return evaluateUnaryOperation(expr, iter);
 		case ast.Expression_FunctionCall:       return evaluateFunctionCall(expr, iter);
 		case ast.Expression_IfChain:            return evaluateIfChain(expr, iter); 
@@ -710,7 +727,11 @@ function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator)
 			return RETURN_RESULT;
 		}
 
-		const rt = evaluateExpression(expr, iter);
+		if (expr.type === ast.Expression_Identifier) {
+			return setError(iter, expr, "Identifier hasn't been assigned to anything with = yet");
+		}
+
+		const rt = evaluateExpression(expr, iter, true);
 		if (rt !== RETURN_NONE) return rt;
 	}
 
@@ -750,7 +771,7 @@ function evaluateIfChainInternal(expr: ast.IfChain, iter: ProgramIterator): Expr
 	return RETURN_NONE;
 }
 
-export function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterator): ExprReturn {
+export function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: ProgramIterator, canAssign = false): ExprReturn {
 	let result; 
 
 	if (expr.op.type !== ast.OP_NONE) {
@@ -770,6 +791,10 @@ export function evaluateBinaryOperation(expr: ast.BinaryExpression, iter: Progra
 	}
 
 	if (expr.op.assignment) {
+		if (canAssign === false) {
+			return setError(iter, expr, "Can't assign to things in this context");
+		}
+
 		return evaluateAssignment(expr, iter, result);
 	} 
 
@@ -1106,8 +1131,10 @@ export function evaluateBinaryOperationOnResults(expr: ast.BinaryExpression, lhs
 }
 
 type SuggestedSymbols = {
-	builtins: string[],
-	inScope:  string[],
+	builtins:    string[],
+	inScope:     string[],
+	environment: string[],
+	datatypes:   string[],
 }
 
 function isFunctionType(type: ResultType): boolean {
@@ -1116,8 +1143,10 @@ function isFunctionType(type: ResultType): boolean {
 
 function getSuggestedSymbols(iter: ProgramIterator, startsWith: string, onlyFunctions: boolean): SuggestedSymbols {
 	const result: SuggestedSymbols = {
-		builtins: [],
-		inScope: [],
+		builtins:    [],
+		inScope:     [],
+		environment: [],
+		datatypes:   [],
 	}
 
 	// Let's try to find a builtin that a user might want. 
@@ -1145,13 +1174,39 @@ function getSuggestedSymbols(iter: ProgramIterator, startsWith: string, onlyFunc
 		}
 	});
 
+	if (iter.environmentVariables) {
+		for (const [k, res] of iter.environmentVariables) {
+			if (onlyFunctions && !isFunctionType(res.type)) {
+				continue;
+			}
+
+			if (k.startsWith(startsWith)) {
+				result.environment.push(k + " | " + resultTypeToString(res.type));
+			}
+		}
+	}
+
+	if (!onlyFunctions) {
+		for (const k in dataTypes) {
+			const res= dataTypes[k];
+
+			if (k.startsWith(startsWith)) {
+				result.environment.push(k + "{...} | initializes a " + resultTypeToString(res.returnType));
+			}
+		}
+	}
+
 	return result;
 }
 
 function getSuggestedSymbolsMessage(iter: ProgramIterator, startsWith: string, onlyFunctions: boolean): string {
 	const suggestions = getSuggestedSymbols(iter, startsWith, onlyFunctions);
 
-	if (suggestions.inScope.length === 0 && suggestions.builtins.length === 0) {
+	if (
+		suggestions.inScope.length === 0 &&
+		suggestions.builtins.length === 0 &&
+		suggestions.environment.length === 0 
+	) {
 		return "";
 	}
 
@@ -1167,6 +1222,11 @@ function getSuggestedSymbolsMessage(iter: ProgramIterator, startsWith: string, o
 			  + suggestions.builtins.join("\n\t");
 	}
 
+	if (suggestions.environment.length > 0) {
+		error += "environment:\n\t" 
+			  + suggestions.environment.join("\n\t");
+	}
+
 	return error;
 }
 
@@ -1174,7 +1234,13 @@ function evaluateIdentifier(expr: ast.Identifier, iter: ProgramIterator): ExprRe
 	const val = getVar(iter, expr.name);
 	if (!val) {
 		let error = "Variable not found: " + expr.name;
-		error += getSuggestedSymbolsMessage(iter, expr.name, false);
+
+		const suggestion = getSuggestedSymbolsMessage(iter, expr.name, false);
+		if (suggestion) {
+			error += suggestion;
+		} else {
+			error += "\n\tYou can make a new one with = "
+		}
 
 		return setError(iter, expr, error);
 	}
@@ -1423,102 +1489,118 @@ function evaluateIndexer(expr: ast.Indexer, iter: ProgramIterator): ExprReturn {
 	}
 }
 
-function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator): ExprReturn {
-	switch (expr.typename.name) {
-		case "list": {
-			const result: Result = { type: Result_List, val: [] };
+export const dataTypes: Record<string, {
+	returnType: ResultType;
+	initializer: (expr: ast.TypeInitializer, iter: ProgramIterator) => ExprReturn;
+}> = {
+	"list": { returnType: Result_List, initializer: initializeList },
+	"map":  { returnType: Result_Map,  initializer: initializeMap },
+	"vec":  { returnType: Result_Vector,  initializer: initializeVector },
+	"mat":  { returnType: Result_Matrix, initializer: initializeMatrix },
+};
 
-			for (const arg of expr.args) {
-				const argEvaluated = evaluateExpressionValue(arg, iter);
-				if (!argEvaluated) return RETURN_ERROR;
-				result.val.push(argEvaluated);
-			}
+function initializeList(expr: ast.TypeInitializer, iter: ProgramIterator): ExprReturn {
+	const result: Result = { type: Result_List, val: [] };
 
-			return setResult(iter, result);
-		} break;
-		case "map": {
-			const result: Result = { type: Result_Map, val: new Map() };
-
-			// for now, we'll just ignore type args. xd
-			for (const arg of expr.args) {
-				if (
-					arg.type !== ast.Expression_BinaryExpression ||
-					!arg.op.assignment || 
-					arg.op.type !== ast.OP_NONE
-				) {
-					return setError(iter, expr, "Maps should be initialized like { key=value, key=value, etc. }");
-				} 
-
-				const key = evaluateExpressionValue(arg.lhs, iter);
-				if (!key) return RETURN_ERROR;
-
-				const val = evaluateExpressionValue(arg.rhs, iter);
-				if (!val) return RETURN_ERROR;
-
-				if (setMapKey(iter, result, key, arg.lhs, val, true) === RETURN_ERROR) return RETURN_ERROR;
-			}
-
-			return setResult(iter, result);
-		} break;
-		case "vec": {
-			const result: Result = { type: Result_Vector, val: [] };
-
-			for (const arg of expr.args) {
-				const val = evaluateExpressionValue(arg, iter);
-				if (!val)                       return RETURN_ERROR;
-				if (val.type !== Result_Number) return setError(iter, arg, "Vectors can only be initialized with numbers");
-				result.val.push(val.val);
-			}
-
-			return setResult(iter, result);
-		} break;
-		case "mat": {
-			if (!expr.typeArgs)                                         return setError(iter, expr, "Need type args, e.g mat<3, 4>");
-			if (expr.typeArgs.length !== 2)                             return setError(iter, expr, "Need 2 type args, e.g mat<3, 4>");
-			if (expr.typeArgs[0].type !== ast.Expression_NumberLiteral) return setError(iter, expr.typeArgs[0], "Need 2 numeric type args, e.g mat<3, 4>");
-			if (expr.typeArgs[1].type !== ast.Expression_NumberLiteral) return setError(iter, expr.typeArgs[1], "Need 2 numeric type args, e.g mat<3, 4>");
-
-			const rows = expr.typeArgs[0].val;
-			const cols = expr.typeArgs[1].val;
-
-			if (expr.args.length !== rows * cols && expr.args.length !== 1) {
-				return setError(iter, expr, `Need to initialize the matrix with exactly 1 or ${rows * cols} values`);
-			}
-			
-			const result: Result = {
-				type: Result_Matrix,
-				val: {
-					rows: rows,
-					cols: cols,
-					data: Array(rows * cols).fill(0),
-				},
-			};
-
-			if (expr.args.length === 1) {
-				const diagonalValue = evaluateExpressionValue(expr.args[0], iter);
-				if (!diagonalValue)                       return RETURN_ERROR;
-				if (diagonalValue.type !== Result_Number) return setError(iter, expr.args[0], "Matrix diagonal can only be initialized with numbers");
-				
-				const minSize = Math.min(rows, cols);
-				for (let i = 0; i < minSize; i++) {
-					const idx = matrix.getIndex(result.val, i, i);
-					result.val.data[idx] = diagonalValue.val;
-				}
-			} else {
-				for (let i = 0; i < expr.args.length; i++) {
-					const arg = expr.args[i];
-					const val = evaluateExpressionValue(arg, iter);
-					if (!val)                       return RETURN_ERROR;
-					if (val.type !== Result_Number) return setError(iter, arg, "Matrix element can only be initialized with numbers");
-					result.val.data[i] = val.val;
-				}
-			}
-
-			return setResult(iter, result);
-		} break;
+	for (const arg of expr.args) {
+		const argEvaluated = evaluateExpressionValue(arg, iter);
+		if (!argEvaluated) return RETURN_ERROR;
+		result.val.push(argEvaluated);
 	}
 
-	return setError(iter, expr, `Don't know how to initialize this type: ${expr.typename.name}`);
+	return setResult(iter, result);
+}
+
+function initializeMap(expr: ast.TypeInitializer, iter: ProgramIterator): ExprReturn {
+	const result: Result = { type: Result_Map, val: new Map() };
+
+	// for now, we'll just ignore type args. xd
+	for (const arg of expr.args) {
+		if (
+			arg.type !== ast.Expression_BinaryExpression ||
+			!arg.op.assignment || 
+			arg.op.type !== ast.OP_NONE
+		) {
+			return setError(iter, expr, "Maps should be initialized like { key=value, key=value, etc. }");
+		} 
+
+		const key = evaluateExpressionValue(arg.lhs, iter);
+		if (!key) return RETURN_ERROR;
+
+		const val = evaluateExpressionValue(arg.rhs, iter);
+		if (!val) return RETURN_ERROR;
+
+		if (setMapKey(iter, result, key, arg.lhs, val, true) === RETURN_ERROR) return RETURN_ERROR;
+	}
+
+	return setResult(iter, result);
+}
+
+function initializeVector(expr: ast.TypeInitializer, iter: ProgramIterator): ExprReturn {
+	const result: Result = { type: Result_Vector, val: [] };
+
+	for (const arg of expr.args) {
+		const val = evaluateExpressionValue(arg, iter);
+		if (!val)                       return RETURN_ERROR;
+		if (val.type !== Result_Number) return setError(iter, arg, "Vectors can only be initialized with numbers");
+		result.val.push(val.val);
+	}
+
+	return setResult(iter, result);
+}
+
+function initializeMatrix(expr: ast.TypeInitializer, iter: ProgramIterator): ExprReturn {
+	if (!expr.typeArgs)                                         return setError(iter, expr, "Need type args, e.g mat<3, 4>");
+	if (expr.typeArgs.length !== 2)                             return setError(iter, expr, "Need 2 type args, e.g mat<3, 4>");
+	if (expr.typeArgs[0].type !== ast.Expression_NumberLiteral) return setError(iter, expr.typeArgs[0], "Need 2 numeric type args, e.g mat<3, 4>");
+	if (expr.typeArgs[1].type !== ast.Expression_NumberLiteral) return setError(iter, expr.typeArgs[1], "Need 2 numeric type args, e.g mat<3, 4>");
+
+	const rows = expr.typeArgs[0].val;
+	const cols = expr.typeArgs[1].val;
+
+	if (expr.args.length !== rows * cols && expr.args.length !== 1) {
+		return setError(iter, expr, `Need to initialize the matrix with exactly 1 or ${rows * cols} values`);
+	}
+	
+	const result: Result = {
+		type: Result_Matrix,
+		val: {
+			rows: rows,
+			cols: cols,
+			data: Array(rows * cols).fill(0),
+		},
+	};
+
+	if (expr.args.length === 1) {
+		const diagonalValue = evaluateExpressionValue(expr.args[0], iter);
+		if (!diagonalValue)                       return RETURN_ERROR;
+		if (diagonalValue.type !== Result_Number) return setError(iter, expr.args[0], "Matrix diagonal can only be initialized with numbers");
+		
+		const minSize = Math.min(rows, cols);
+		for (let i = 0; i < minSize; i++) {
+			const idx = matrix.getIndex(result.val, i, i);
+			result.val.data[idx] = diagonalValue.val;
+		}
+	} else {
+		for (let i = 0; i < expr.args.length; i++) {
+			const arg = expr.args[i];
+			const val = evaluateExpressionValue(arg, iter);
+			if (!val)                       return RETURN_ERROR;
+			if (val.type !== Result_Number) return setError(iter, arg, "Matrix element can only be initialized with numbers");
+			result.val.data[i] = val.val;
+		}
+	}
+
+	return setResult(iter, result);
+}
+
+function evaluateTypeInitializer(expr: ast.TypeInitializer, iter: ProgramIterator): ExprReturn {
+	const val = dataTypes[expr.typename.name];
+	if (!val) {
+		return setError(iter, expr, `Don't know how to initialize this type: ${expr.typename.name}`);
+	}
+
+	return val.initializer(expr, iter);
 }
 
 export function getMapKey(result: Result): ValidMapKey | undefined {
@@ -1626,19 +1708,33 @@ export const builtins: Record<string, Result> = {
 
 	// Maths
 	"max":   { type: Result_BuiltinFunction, val: math_max },
+	"math_max":   { type: Result_BuiltinFunction, val: math_max },
 	"min":   { type: Result_BuiltinFunction, val: math_min },
+	"math_min":   { type: Result_BuiltinFunction, val: math_min },
 	"clamp": { type: Result_BuiltinFunction, val: math_clamp },
+	"math_clamp": { type: Result_BuiltinFunction, val: math_clamp },
 	"sin":   { type: Result_BuiltinFunction, val: math_sin },
+	"math_sin":   { type: Result_BuiltinFunction, val: math_sin },
 	"cos":   { type: Result_BuiltinFunction, val: math_cos },
+	"math_cos":   { type: Result_BuiltinFunction, val: math_cos },
 	"tan":   { type: Result_BuiltinFunction, val: math_tan },
+	"math_tan":   { type: Result_BuiltinFunction, val: math_tan },
 	"asin":  { type: Result_BuiltinFunction, val: math_asin },
+	"math_asin":  { type: Result_BuiltinFunction, val: math_asin },
 	"acos":  { type: Result_BuiltinFunction, val: math_acos },
+	"math_acos":  { type: Result_BuiltinFunction, val: math_acos },
 	"atan":  { type: Result_BuiltinFunction, val: math_atan },
+	"math_atan":  { type: Result_BuiltinFunction, val: math_atan },
 	"atan2": { type: Result_BuiltinFunction, val: math_atan2 },
+	"math_atan2": { type: Result_BuiltinFunction, val: math_atan2 },
 	"log2":  { type: Result_BuiltinFunction, val: math_log2 },
+	"math_log2":  { type: Result_BuiltinFunction, val: math_log2 },
 	"ln":    { type: Result_BuiltinFunction, val: math_ln },
+	"math_ln":    { type: Result_BuiltinFunction, val: math_ln },
 	"pow":   { type: Result_BuiltinFunction, val: math_pow },
+	"math_pow":   { type: Result_BuiltinFunction, val: math_pow },
 	"sqrt":  { type: Result_BuiltinFunction, val: math_sqrt },
+	"math_sqrt":  { type: Result_BuiltinFunction, val: math_sqrt },
 
 	"PI": newNumber(Math.PI),
 	"E":  newNumber(Math.E),
@@ -1698,7 +1794,7 @@ function evaluateNumber(expr: ast.Expression, iter: ProgramIterator): ResultNumb
 	const result = evaluateExpressionValue(expr, iter);
 	if (!result) return undefined;
 	if (result.type !== Result_Number) {
-		setExpectedValueTypeError(iter, expr, Result_List, result.type);
+		setExpectedValueTypeError(iter, expr, Result_Number, result.type);
 		return undefined;
 	}
 
@@ -1710,7 +1806,7 @@ function evaluateVec(expr: ast.Expression, iter: ProgramIterator): ResultVector 
 	const vec = evaluateExpressionValue(expr, iter);
 	if (!vec) return undefined;
 	if (vec.type !== Result_Vector) {
-		setExpectedValueTypeError(iter, expr, Result_List, vec.type);
+		setExpectedValueTypeError(iter, expr, Result_Vector, vec.type);
 		return undefined;
 	}
 	return vec;
@@ -2249,11 +2345,11 @@ export function draw_line_wrapper(call: ast.FunctionCall, iter: ProgramIterator)
 
 export function draw_line(iter: ProgramIterator, p0: vector.Vec3, p1: vector.Vec3, thickness: number): ExprReturn {
 	iter.drawCalls.push({
-		type: DrawCall_Line,
+		type:  DrawCall_Line,
 		color: cloneColor(iter.drawParams.color),
-		p0: p0,
-		p1: p1,
-		radius: thickness,
+		p0:    p0,
+		p1:    p1,
+		thickness: thickness,
 	})
 	return RETURN_NONE;
 }
