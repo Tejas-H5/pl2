@@ -99,7 +99,7 @@ export function drawCircle(s: State, x: number, y: number, radius: number) {
 export function drawLabel(s: State, x: number, y: number, label: string, xDir: number, yDir: number, gap: number) {
 	const metrics = s.ctx.measureText(label);
 	const width   = metrics.width;
-	const height  = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+	const height  = s.fontSizePx;
 
 	s.ctx.textAlign    = "left";
 	s.ctx.textBaseline = "top";
@@ -130,7 +130,7 @@ export function drawLabelRotated(s: State, x: number, y: number, label: string, 
 
 	const metrics = s.ctx.measureText(label);
 	const width   = metrics.width;
-	const height  = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+	const height  = s.fontSizePx;
 
 	s.ctx.textAlign    = "left";
 	s.ctx.textBaseline = "top";

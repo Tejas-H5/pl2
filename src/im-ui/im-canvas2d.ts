@@ -6,6 +6,10 @@ export function imC2dBegin(c: ImCache, aspectRatio: number): c2d.State | undefin
 	let canvasState: c2d.State | undefined;
 
 	const canvasRoot = imdom.ElBegin(c, el.CANVAS); {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "userSelect", "none");
+		}
+
 		canvasState = 
 			im.Get(c, c2d.createContext) ??
 			im.Set(c, c2d.createContext(canvasRoot.root));

@@ -382,22 +382,6 @@ function imCodeOutput(c: ImCache, output: CodeCellOutput) {
 			} im.ForEnd(c)
 		} im.IfEnd(c);
 
-		if (im.If(c) && interpretResult.logOutputs.length > 0) {
-			imVDivider(c);
-
-			im.For(c); for (const output of interpretResult.logOutputs) {
-				imBegin(c, BLOCK); {
-					imCodeSpanBegin(c); {
-						imStr(c, ast.expressionToString(code, output.expr));
-					} imCodeSpanEnd(c);
-					imStr(c, " -> ");
-					imStr(c, output.text);
-					imStr(c, " | ");
-					imStr(c, pl2.resultTypeToString(output.result.type));
-				} imEnd(c);
-			} im.ForEnd(c)
-		} im.IfEnd(c);
-
 		if (im.If(c) && interpretResult.drawCalls.length > 0) {
 			imVDivider(c);
 			
@@ -564,9 +548,7 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 	const axes = output.axes;
 
 	const plotState = im.State(c, plt.newPlotState);
-	const state =
-		im.GetInline(c, imPlot) ?? 
-		im.Set(c, { xAxis: 0, yAxis: 0 });
+	const state = im.GetInline(c, imPlot) ?? im.Set(c, { xAxis: 0, yAxis: 0 });
 
 	imBegin(c, ROW, CENTER); {
 		imStr(c, "X: ");
@@ -586,11 +568,23 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 		}
 	} imEnd(c);
 
+	const dragState = im.GetInline(c, imPlot) ?? im.Set(c, {
+		dragging: false,
+		x: 0, y: 0, xLo: 0, xHi: 0, yLo: 0, yHi: 0,
+		version: 0
+	});
+
 	const s = imC2dBegin(c, getDesiredAspectRatio());
 	if (s) {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "cursor", "move");
+		}
+
 		const outputChanged = im.Memo(c, output);
 		const xAxisChanged  = im.Memo(c, state.xAxis);
 		const yAxisChanged  = im.Memo(c, state.yAxis);
+		const dragChanged   = im.Memo(c, dragState.version);
+		const plotChanged   = im.Memo(c, plotState.version);
 
 		if (axes.length === 1) {
 			state.xAxis = 0;
@@ -599,10 +593,14 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 		const xAxis = axes[state.xAxis];
 		const yAxis = axes[state.yAxis];
 
-		if (outputChanged || xAxisChanged || yAxisChanged) {
+		if (outputChanged) {
 			initializeC2d(s);
-
 			plt.refitPlot(plotState, xAxis.numbers, yAxis.numbers);
+		}
+
+		if (outputChanged || xAxisChanged || yAxisChanged || dragChanged || plotChanged) {
+			initializeC2d(s);
+			plotState.lines = output.type === pl2.DataVisualiserType_Line;
 
 			c2d.setColor(s, 1, 1, 1, 1);
 			c2d.drawBackground(s)
@@ -610,6 +608,37 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 
 			plt.plotAxes(s, plotState, xAxis.name, yAxis.name);
 			plt.plotPoints(s, plotState, xAxis.numbers, yAxis.numbers);
+		}
+
+		const mouse = imdom.getMouse();
+
+		if (imdom.hasMousePress(c)) {
+			dragState.dragging = true;
+			dragState.x = mouse.X;
+			dragState.y = mouse.Y;
+			dragState.xLo = plotState.x.lo;
+			dragState.xHi = plotState.x.hi;
+			dragState.yLo = plotState.y.lo;
+			dragState.yHi = plotState.y.hi;
+			dragState.version += 1;
+		}
+
+		if (dragState.dragging) {
+			plotState.x.lo = dragState.xLo; plotState.x.hi = dragState.xHi;
+			plotState.y.lo = dragState.yLo; plotState.y.hi = dragState.yHi;
+
+			const dx = -(plt.mapScreenXToXAxis(s, plotState, mouse.X) - plt.mapScreenXToXAxis(s, plotState, dragState.x));
+			const dy = plt.mapScreenYToYAxis(s, plotState, mouse.Y) - plt.mapScreenYToYAxis(s, plotState, dragState.y);
+
+			plotState.x.lo = dragState.xLo + dx; plotState.x.hi = dragState.xHi + dx;
+			plotState.y.lo = dragState.yLo + dy; plotState.y.hi = dragState.yHi + dy;
+
+			plotState.version += 1;
+		}
+		
+		if (dragState.dragging && !mouse.leftMouseButton) {
+			dragState.dragging = false;
+			dragState.version += 1;
 		}
 	} imC2dEnd(c, s);
 }

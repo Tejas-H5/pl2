@@ -614,6 +614,7 @@ function getBlur(): boolean {
     return globalEventSystem.blur;
 }
 
+// NOTE: no hasMouseDown. It's actually very uncommon that you want this.
 function hasMousePress(c: ImCache, el = getElement(c)): boolean {
     const mouse = getMouse();
     return elIsInSetThisFrame(el, mouse.mouseDownElements)
@@ -663,9 +664,9 @@ export type MouseState = {
 
     ev: MouseEvent | null;
 
-    leftMouseButton: boolean;
+    leftMouseButton:   boolean;
     middleMouseButton: boolean;
-    rightMouseButton: boolean;
+    rightMouseButton:  boolean;
 
     dX: number;
     dY: number;

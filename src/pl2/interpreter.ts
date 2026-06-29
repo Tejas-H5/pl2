@@ -170,7 +170,6 @@ export type ProgramIterator = {
 
 	// Outputs
 	printOutputs: string[];
-	logOutputs:   LogOutput[];
 	dataOutputs:  DataOutput[];
 
 	drawParams: {
@@ -339,7 +338,6 @@ export function newProgramIterator(program: ast.Program, environment?: Map<strin
 		rng: newRandomNumberGenerator(),
 
 		printOutputs:      [],
-		logOutputs:  [],
 		dataOutputs: [],
 
 		drawParams: {
@@ -1678,7 +1676,6 @@ export const builtins: Record<string, Result> = {
 	// Output
 	"print":   { type: Result_BuiltinFunction, val: print },
 	"println": { type: Result_BuiltinFunction, val: println },
-	"log":     { type: Result_BuiltinFunction, val: log },
 
 	// Matrices/Vectors
 	"matrix_transform_cartesian":                     { type: Result_BuiltinFunction, val: matrix_transform_cartesian },
@@ -1729,33 +1726,39 @@ export const builtins: Record<string, Result> = {
 
 	// Maths
 	"max":   { type: Result_BuiltinFunction, val: math_max },
-	"math_max":   { type: Result_BuiltinFunction, val: math_max },
 	"min":   { type: Result_BuiltinFunction, val: math_min },
-	"math_min":   { type: Result_BuiltinFunction, val: math_min },
 	"clamp": { type: Result_BuiltinFunction, val: math_clamp },
-	"math_clamp": { type: Result_BuiltinFunction, val: math_clamp },
 	"sin":   { type: Result_BuiltinFunction, val: math_sin },
-	"math_sin":   { type: Result_BuiltinFunction, val: math_sin },
 	"cos":   { type: Result_BuiltinFunction, val: math_cos },
-	"math_cos":   { type: Result_BuiltinFunction, val: math_cos },
 	"tan":   { type: Result_BuiltinFunction, val: math_tan },
-	"math_tan":   { type: Result_BuiltinFunction, val: math_tan },
 	"asin":  { type: Result_BuiltinFunction, val: math_asin },
-	"math_asin":  { type: Result_BuiltinFunction, val: math_asin },
 	"acos":  { type: Result_BuiltinFunction, val: math_acos },
-	"math_acos":  { type: Result_BuiltinFunction, val: math_acos },
 	"atan":  { type: Result_BuiltinFunction, val: math_atan },
-	"math_atan":  { type: Result_BuiltinFunction, val: math_atan },
 	"atan2": { type: Result_BuiltinFunction, val: math_atan2 },
-	"math_atan2": { type: Result_BuiltinFunction, val: math_atan2 },
 	"log2":  { type: Result_BuiltinFunction, val: math_log2 },
-	"math_log2":  { type: Result_BuiltinFunction, val: math_log2 },
 	"ln":    { type: Result_BuiltinFunction, val: math_ln },
-	"math_ln":    { type: Result_BuiltinFunction, val: math_ln },
 	"pow":   { type: Result_BuiltinFunction, val: math_pow },
-	"math_pow":   { type: Result_BuiltinFunction, val: math_pow },
 	"sqrt":  { type: Result_BuiltinFunction, val: math_sqrt },
+	"ceil":   { type: Result_BuiltinFunction, val: math_ceil },
+	"floor":  { type: Result_BuiltinFunction, val: math_floor },
+	"round":  { type: Result_BuiltinFunction, val: math_round },
+	"math_max":   { type: Result_BuiltinFunction, val: math_max },
+	"math_min":   { type: Result_BuiltinFunction, val: math_min },
+	"math_clamp": { type: Result_BuiltinFunction, val: math_clamp },
+	"math_sin":   { type: Result_BuiltinFunction, val: math_sin },
+	"math_cos":   { type: Result_BuiltinFunction, val: math_cos },
+	"math_tan":   { type: Result_BuiltinFunction, val: math_tan },
+	"math_asin":  { type: Result_BuiltinFunction, val: math_asin },
+	"math_acos":  { type: Result_BuiltinFunction, val: math_acos },
+	"math_atan":  { type: Result_BuiltinFunction, val: math_atan },
+	"math_atan2": { type: Result_BuiltinFunction, val: math_atan2 },
+	"math_log2":  { type: Result_BuiltinFunction, val: math_log2 },
+	"math_ln":    { type: Result_BuiltinFunction, val: math_ln },
+	"math_pow":   { type: Result_BuiltinFunction, val: math_pow },
 	"math_sqrt":  { type: Result_BuiltinFunction, val: math_sqrt },
+	"math_ceil":  { type: Result_BuiltinFunction, val: math_ceil },
+	"math_floor": { type: Result_BuiltinFunction, val: math_floor },
+	"math_round": { type: Result_BuiltinFunction, val: math_round },
 
 	"PI": newNumber(Math.PI),
 	"E":  newNumber(Math.E),
@@ -1783,29 +1786,6 @@ export function print(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
 		}
 
 		iter.printOutputs.push(message);
-	}
-
-	return RETURN_NONE;
-}
-
-export function log(fn: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
-	for (let i = 0; i < fn.arguments.length; i++) {
-		const expr = fn.arguments[i];
-
-		evaluateExpression(expr, iter);
-
-		let message;
-		if (iter.lastResult.error) {
-			message = iter.lastResult.error.message;
-		} else {
-			message = resultToString(iter.lastResult.result);
-		}
-
-		iter.logOutputs.push({
-			expr:   expr,
-			text:   message,
-			result: cloneResultIfValueSemantics(iter.lastResult.result),
-		});
 	}
 
 	return RETURN_NONE;
@@ -2003,6 +1983,28 @@ export function math_sqrt(call: ast.FunctionCall, iter: ProgramIterator): ExprRe
 	const val = evaluateNumber(call.arguments[0], iter)
 	if (!val) return RETURN_ERROR;
 	return setResultNumber(iter, Math.sqrt(val.val));
+}
+
+
+export function math_ceil(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (!checkNumArgs(call, 1, iter))                   return RETURN_ERROR;
+	const val = evaluateNumber(call.arguments[0], iter)
+	if (!val) return RETURN_ERROR;
+	return setResultNumber(iter, Math.ceil(val.val));
+}
+
+export function math_floor(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (!checkNumArgs(call, 1, iter))                   return RETURN_ERROR;
+	const val = evaluateNumber(call.arguments[0], iter)
+	if (!val) return RETURN_ERROR;
+	return setResultNumber(iter, Math.floor(val.val));
+}
+
+export function math_round(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (!checkNumArgs(call, 1, iter))                   return RETURN_ERROR;
+	const val = evaluateNumber(call.arguments[0], iter)
+	if (!val) return RETURN_ERROR;
+	return setResultNumber(iter, Math.round(val.val));
 }
 
 export function random(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
