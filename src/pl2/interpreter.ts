@@ -5,6 +5,7 @@ import * as vector from "./vector";
 import { newParser } from "./parser";
 import { TextPosition } from "./text-pos";
 import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, setRngSeed } from "./random";
+import { filterInPlace } from "./array-utils";
 
 ////////////////////////////////////////////////////
 // Types
@@ -255,6 +256,7 @@ export type DrawLabel = DrawCallBase & {
 	p0:        vector.Vec3;
 	text:      string;
 	size:      number;
+	rotation:  number;
 	direction: vector.Vec3;
 };
 
@@ -278,7 +280,7 @@ export type DrawCall =
  ;
 
 // Our best attempt at modeling data itself.
-// Trying my best to not complext the visualisation of the data with the data - hence, no 
+// Trying my best to not complect the visualisation of the data with the data - hence, no 
 // mention of histograms, time series, point clouds, etc.
 export type DataOutput = {
 	title: string;
@@ -286,10 +288,16 @@ export type DataOutput = {
 	type: DataVisualiserType;
 }
 
-export const DataVisualiserType_Table  = 0;
+export const DataVisualiserType_Table     = 0;
+export const DataVisualiserType_Point     = 1;
+export const DataVisualiserType_Line      = 2;
+export const DataVisualiserType_Histogram = 3;
 
 export type DataVisualiserType =
  | typeof DataVisualiserType_Table
+ | typeof DataVisualiserType_Point
+ | typeof DataVisualiserType_Line
+ | typeof DataVisualiserType_Histogram
  ;
 
 export type DataOutputAxis = {
@@ -505,6 +513,9 @@ export function interpretProgram(program: ast.Program, iter: ProgramIterator) {
 	evaluateExpressionBlock(program.statements, iter);
 
 	assert(iter.scopes.length === 1);
+
+	// Don't send down plots with 0 axes ever.
+	filterInPlace(iter.dataOutputs, d => d.axes.length > 0);
 
 	if (iter.lastResult.error) {
 		iter.errors.push({
@@ -725,10 +736,6 @@ function evaluateExpressionBlock(block: ast.Expression[], iter: ProgramIterator)
 			}
 			setResult(iter, CONTINUE);
 			return RETURN_RESULT;
-		}
-
-		if (expr.type === ast.Expression_Identifier) {
-			return setError(iter, expr, "Identifier hasn't been assigned to anything with = yet");
 		}
 
 		const rt = evaluateExpression(expr, iter, true);
@@ -1191,7 +1198,7 @@ function getSuggestedSymbols(iter: ProgramIterator, startsWith: string, onlyFunc
 			const res= dataTypes[k];
 
 			if (k.startsWith(startsWith)) {
-				result.environment.push(k + "{...} | initializes a " + resultTypeToString(res.returnType));
+				result.datatypes.push(k + "{...} | initializes a " + resultTypeToString(res.returnType));
 			}
 		}
 	}
@@ -1205,7 +1212,8 @@ function getSuggestedSymbolsMessage(iter: ProgramIterator, startsWith: string, o
 	if (
 		suggestions.inScope.length === 0 &&
 		suggestions.builtins.length === 0 &&
-		suggestions.environment.length === 0 
+		suggestions.environment.length === 0 &&
+		suggestions.datatypes.length === 0
 	) {
 		return "";
 	}
@@ -1214,17 +1222,26 @@ function getSuggestedSymbolsMessage(iter: ProgramIterator, startsWith: string, o
 
 	if (suggestions.inScope.length > 0) {
 		error += "in-scope:\n\t" 
-			  + suggestions.inScope.join("\n\t");
+			  + suggestions.inScope.join("\n\t")
+			  + "\n";
 	}
 
 	if (suggestions.builtins.length > 0) {
 		error += "builtins:\n\t" 
-			  + suggestions.builtins.join("\n\t");
+			  + suggestions.builtins.join("\n\t")
+			  + "\n";
 	}
 
 	if (suggestions.environment.length > 0) {
 		error += "environment:\n\t" 
-			  + suggestions.environment.join("\n\t");
+			  + suggestions.environment.join("\n\t")
+			  + "\n";
+	}
+
+	if (suggestions.datatypes.length > 0) {
+		error += "datatypes:\n\t" 
+			  + suggestions.datatypes.join("\n\t")
+			  + "\n";
 	}
 
 	return error;
@@ -1683,6 +1700,7 @@ export const builtins: Record<string, Result> = {
 	"draw_square":        { type: Result_BuiltinFunction, val: draw_square },
 	"draw_rect":          { type: Result_BuiltinFunction, val: draw_rect },
 	"draw_label":         { type: Result_BuiltinFunction, val: draw_label },
+	"draw_label_rotated": { type: Result_BuiltinFunction, val: draw_label_rotated },
 	"draw_background":    { type: Result_BuiltinFunction, val: draw_background },
 
 	// Animations
@@ -1690,10 +1708,13 @@ export const builtins: Record<string, Result> = {
 	// But we need an iterative version of the program runner instead of the for-loop version!
 	// "draw_frame":           { type: Result_BuiltinFunction, val: draw_frame },
 
-	// Very simple API. This means that consumers will need to validate the outputs
-	"plot_new":         { type: Result_BuiltinFunction, val: plot_new },
-	"plot_value":       { type: Result_BuiltinFunction, val: plot_value },
-	"plot_values":      { type: Result_BuiltinFunction, val: plot_values },
+	"plot_new_auto":      { type: Result_BuiltinFunction, val: plot_new_auto },
+	"plot_new_table":     { type: Result_BuiltinFunction, val: plot_new_table },
+	"plot_new_line":      { type: Result_BuiltinFunction, val: plot_new_line },
+	"plot_new_points":    { type: Result_BuiltinFunction, val: plot_new_points },
+	"plot_new_histogram": { type: Result_BuiltinFunction, val: plot_new_histogram },
+	"plot_value":         { type: Result_BuiltinFunction, val: plot_value },
+	"plot_values":        { type: Result_BuiltinFunction, val: plot_values },
 
 	// Debug/introspection
 	"expr_to_string":      { type: Result_BuiltinFunction, val: expr_to_string },
@@ -2429,6 +2450,37 @@ export function draw_label(call: ast.FunctionCall, iter: ProgramIterator): ExprR
 		size:      size.val,
 		direction: direction,
 		p0:        p0,
+		rotation:  0,
+		text:      label,
+	})
+	return RETURN_NONE;
+}
+
+export function draw_label_rotated(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	if (!checkNumArgs(call, 5, iter)) return RETURN_ERROR;
+
+	const p0 = evaluateVec3(call.arguments[0], iter);
+	if (!p0)         return RETURN_ERROR;
+
+	const label = evaluateString(call.arguments[1], iter);
+	if (!label)      return RETURN_ERROR;
+
+	const size = evaluateNumber(call.arguments[2], iter);
+	if (!size)       return RETURN_ERROR;
+
+	const direction = evaluateVec3(call.arguments[3], iter);
+	if (!direction)  return RETURN_ERROR;
+
+	const angle = evaluateNumber(call.arguments[4], iter);
+	if (!angle)      return RETURN_ERROR;
+
+	iter.drawCalls.push({
+		type:      DrawCall_Label,
+		color:     cloneColor(iter.drawParams.color),
+		size:      size.val,
+		direction: direction,
+		p0:        p0,
+		rotation:  angle.val,
 		text:      label,
 	})
 	return RETURN_NONE;
@@ -2444,8 +2496,25 @@ export function draw_background(call: ast.FunctionCall, iter: ProgramIterator): 
 	return RETURN_NONE;
 }
 
-export function plot_new(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+export function plot_new_auto(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	// TODO: infer a good way to visualise the data.
 	return plot_new_internal(call, iter, DataVisualiserType_Table);
+}
+
+export function plot_new_table(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	return plot_new_internal(call, iter, DataVisualiserType_Table);
+}
+
+export function plot_new_line(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	return plot_new_internal(call, iter, DataVisualiserType_Line);
+}
+
+export function plot_new_points(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	return plot_new_internal(call, iter, DataVisualiserType_Point);
+}
+
+export function plot_new_histogram(call: ast.FunctionCall, iter: ProgramIterator): ExprReturn {
+	return plot_new_internal(call, iter, DataVisualiserType_Histogram);
 }
 
 export function plot_new_internal(call: ast.FunctionCall, iter: ProgramIterator, suggestedVisualiser: DataVisualiserType): ExprReturn {
@@ -2541,7 +2610,10 @@ function pushNumberToAxis(axis: DataOutputAxis, val: number) {
 function pushStringToAxis(axis: DataOutputAxis, val: string) {
 	if (!axis.labels) axis.labels = [];
 	axis.init = true;
+
+	const idx = axis.labels.length;
 	axis.labels.push(val);
+	pushNumberToAxis(axis, idx);
 }
 
 function getDataAxis(output: DataOutput, axisName: string): DataOutputAxis {

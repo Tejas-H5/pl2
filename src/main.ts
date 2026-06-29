@@ -1,11 +1,14 @@
+import { assert, assertNever } from "assert";
 import { im, ImCache, imdom } from "im-js";
 import { BLOCK, CENTER, COL, cssVars, imui, ROW } from "im-ui";
+import { imButtonPressed } from "im-ui/im-button";
+import { imC2dBegin, imC2dEnd } from "im-ui/im-canvas2d";
 import { ast, pl2 } from "pl2";
+import { DataOutput } from "pl2/interpreter";
+import { newParser } from "pl2/parser";
 import {
 	imB,
 	imBegin,
-	imButtonBegin,
-	imButtonEnd,
 	imCodeBegin,
 	imCodeEnd,
 	imCodeSpanBegin,
@@ -14,6 +17,7 @@ import {
 	imFlex,
 	imHeading,
 	imHSpace,
+	imHSpaceSmall,
 	imPreWrap,
 	imStr,
 	imStrFmt,
@@ -21,12 +25,9 @@ import {
 	imVDivider,
 	imVSpace
 } from "ui-primitives";
+import * as c2d from "utils/dom/canvas2d";
+import * as plt from "utils/dom/canvas2d-plotting";
 import { imHandleTextAreaEvent, imTextAreaBegin, imTextAreaEnd } from "/im-ui/editable-text-area";
-import { assert } from "assert";
-import { newParser } from "pl2/parser";
-import { DataOutput } from "pl2/interpreter";
-import { imC2dBegin, imC2dEnd } from "im-ui/im-canvas2d";
-import * as c2d from "dom-utils/canvas2d";
 
 const ctx: AppContext = {
 	cellResults: [],
@@ -40,7 +41,17 @@ function imMain(c: ImCache) {
 	im.CacheBegin(c, imMain); {
 		imdom.RootBegin(c, document.body); {
 			const ev = imdom.GlobalEventSystemBegin(c); {
-				imApp(c);
+				const tryCatch = im.Try(c); try {
+					const { err } = tryCatch;
+					if (im.If(c) && err) {
+						imStr(c, "An error occured: " + err);
+					} else {
+						im.Else(c);
+						imApp(c);
+					} im.IfEnd(c);
+				} catch(e) {
+					im.TryCatch(c, tryCatch, e);
+				} im.TryEnd(c, tryCatch);
 			} imdom.GlobalEventSystemEnd(c, ev);
 		} imdom.RootEnd(c, document.body);
 	} im.CacheEnd(c);
@@ -163,27 +174,23 @@ function imApp(c: ImCache) {
 		imVSpace(c, cssVars.bg);
 
 		imBegin(c, ROW, CENTER, CENTER); {
-			imButtonBegin(c, ROW); {
-				imStr(c, "-"); 
-				if (imdom.hasMousePress(c)) {
+			if (im.If(c) && cellState.code.length === 0) {
+				if (imButtonPressed(c, "-")) {
 					deferredEvent = () => {
 						state.cells.splice(idx, 1);
 						saveStateDebounced(state);
 					}
 				}
-			} imButtonEnd(c);
+			} im.IfEnd(c);
 
 			imHSpace(c, cssVars.bg);
 
-			imButtonBegin(c, ROW); {
-				imStr(c, "+"); 
-				if (imdom.hasMousePress(c)) {
-					deferredEvent = () => {
-						state.cells.splice(idx + 1, 0, newCodeCellState());
-						saveStateDebounced(state);
-					}
+			if (imButtonPressed(c, "+")) {
+				deferredEvent = () => {
+					state.cells.splice(idx + 1, 0, newCodeCellState());
+					saveStateDebounced(state);
 				}
-			} imButtonEnd(c);
+			}
 		} imEnd(c);
 
 		imVSpace(c, cssVars.bg)
@@ -196,15 +203,12 @@ function imApp(c: ImCache) {
 
 	im.If(c); if (state.cells.length === 0) {
 		imBegin(c, ROW, CENTER, CENTER); {
-			imButtonBegin(c, ROW); {
-				imStr(c, "+"); 
-				if (imdom.hasMousePress(c)) {
-					deferredEvent = () => {
-						state.cells.push(newCodeCellState());
-						saveStateDebounced(state);
-					}
+			if (imButtonPressed(c, "+")) {
+				deferredEvent = () => {
+					state.cells.push(newCodeCellState());
+					saveStateDebounced(state);
 				}
-			} imButtonEnd(c);
+			}
 		} imEnd(c);
 	} im.IfEnd(c);
 
@@ -406,13 +410,22 @@ function imCodeOutput(c: ImCache, output: CodeCellOutput) {
 			im.For(c); for (const output of interpretResult.dataOutputs) {
 				imSubHeading(c, output.title);
 
-				if (im.If(c) && output.axes.length === 2) {
-					imPointsPlot(c, output);
-				} else {
-					im.Else(c);
-					// A table is great way to visualise data when we have no clue how to visualise the data
-					imTable(c, output);
-				} im.IfEnd(c);
+				im.Switch(c, output.type); switch(output.type) {
+					case pl2.DataVisualiserType_Table: {
+						// A table is great way to visualise data when we have no clue how to visualise the data
+						imTable(c, output);
+					} break;
+					case pl2.DataVisualiserType_Point: {
+						imPlot(c, output);
+					} break;
+					case pl2.DataVisualiserType_Line: {
+						imPlot(c, output);
+					} break;
+					case pl2.DataVisualiserType_Histogram: {
+						imStr(c, "TODO: implement histograms");
+					} break;
+					default: assertNever(output.type);
+				} im.SwitchEnd(c);
 			} im.ForEnd(c);
 		} im.IfEnd(c);
 	} im.IfEnd(c);
@@ -461,6 +474,13 @@ function imTable(c: ImCache, output: DataOutput) {
 	} imEnd(c);
 }
 
+function initializeC2d(s: c2d.State) {
+	c2d.setColor(s, 1, 1, 1, 1);
+	c2d.drawBackground(s);
+	c2d.setFont(s, "Inter", 20);
+	c2d.setColor(s, 0, 0, 0, 1);
+}
+
 function imDrawCalls(c: ImCache, output: CodeCellOutput) {
 	const drawCalls = output.iter.drawCalls;
 
@@ -469,10 +489,7 @@ function imDrawCalls(c: ImCache, output: CodeCellOutput) {
 		if (im.Memo(c, drawCalls)) {
 			const t0 = performance.now();
 
-			c2d.setColor(s, 1, 1, 1, 1);
-			c2d.drawBackground(s);
-			c2d.setFont(s, "Inter", 20);
-			c2d.setColor(s, 0, 0, 0, 1);
+			initializeC2d(s);
 
 			for (let i = 0; i < drawCalls.length; i++) {
 				const call = drawCalls[i];
@@ -495,12 +512,13 @@ function imDrawCalls(c: ImCache, output: CodeCellOutput) {
 					} break;
 					case pl2.DrawCall_Label: {
 						c2d.setFont(s, s.fontName, call.size);
-						c2d.drawLabel(
+						c2d.drawLabelRotated(
 							s,
 							call.p0[0], call.p0[1],
 							call.text,
 							call.direction[0], call.direction[1],
-							s.fontSizePx / 5
+							s.fontSizePx / 5,
+							call.rotation,
 						);
 					} break;
 				}
@@ -515,9 +533,84 @@ function getDesiredAspectRatio(): number {
 	return window.innerWidth / window.innerHeight;
 }
 
-function imPointsPlot(c: ImCache, output: pl2.DataOutput) {
+const PlotType_Point = 0;
+const PlotType_Line  = 1;
+
+type PlotType = 
+ | typeof PlotType_Point
+ | typeof PlotType_Line
+ ;
+
+type AxisSelectorEvent = { newAxis: number };
+
+function imAxisSelector(c: ImCache, axes: pl2.DataOutputAxis[], currentAxis: number): AxisSelectorEvent | undefined {
+	let result: AxisSelectorEvent | undefined;
+
+	imBegin(c, ROW); {
+		im.For(c); for (let i = 0; i < axes.length; i++) {
+			if (i > 0) imHSpaceSmall(c);
+
+			const axis = axes[i];
+			if (imButtonPressed(c, axis.name, currentAxis === i)) {
+				result = { newAxis: i };
+			}
+		} im.ForEnd(c);
+	} imEnd(c);
+
+	return result;
+}
+
+function imPlot(c: ImCache, output: pl2.DataOutput) {
+	const axes = output.axes;
+
+	const plotState = im.State(c, plt.newPlotState);
+	const state =
+		im.GetInline(c, imPlot) ?? 
+		im.Set(c, { xAxis: 0, yAxis: 0 });
+
+	imBegin(c, ROW, CENTER); {
+		imStr(c, "X: ");
+		imHSpaceSmall(c);
+		const xAxisSelect = imAxisSelector(c, output.axes, state.xAxis);
+		if (xAxisSelect) {
+			state.xAxis = xAxisSelect.newAxis;
+		}
+
+		imHSpace(c);
+
+		imStr(c, "Y: ");
+		imHSpaceSmall(c);
+		const yAxisSelect = imAxisSelector(c, output.axes, state.yAxis);
+		if (yAxisSelect) {
+			state.yAxis = yAxisSelect.newAxis;
+		}
+	} imEnd(c);
+
 	const s = imC2dBegin(c, getDesiredAspectRatio());
 	if (s) {
-		c2d.drawLine(s, 0, 0, s.width, s.height, 1);
+		const outputChanged = im.Memo(c, output);
+		const xAxisChanged  = im.Memo(c, state.xAxis);
+		const yAxisChanged  = im.Memo(c, state.yAxis);
+
+		if (axes.length === 1) {
+			state.xAxis = 0;
+			state.yAxis = 0;
+		}
+		const xAxis = axes[state.xAxis];
+		const yAxis = axes[state.yAxis];
+
+		if (outputChanged || xAxisChanged || yAxisChanged) {
+			initializeC2d(s);
+
+			plt.refitPlot(plotState, xAxis.numbers, yAxis.numbers);
+
+			c2d.setColor(s, 1, 1, 1, 1);
+			c2d.drawBackground(s)
+			c2d.setColor(s, 0, 0, 0, 1);
+
+			plt.plotAxes(s, plotState, xAxis.name, yAxis.name);
+			plt.plotPoints(s, plotState, xAxis.numbers, yAxis.numbers);
+		}
 	} imC2dEnd(c, s);
 }
+

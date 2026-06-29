@@ -1191,7 +1191,7 @@ export type TryState = {
 /**
  * ```ts
  * const tryState = im.Try(c); try {
- *      const { err, recover }  tryState;
+ *      const { err, recover } = tryState;
  *      if (im.If(c) && !err) {
  *          MainApp(c);
  *      } else {
@@ -1201,10 +1201,10 @@ export type TryState = {
  *      } im.IfEnd(c);
  *      // render your component here
  * } catch(err) {
- *      TryCatch(c, tryState, err);
+ *      im.TryCatch(c, tryState, err);
  *      // NOTE: you can't render components here. use the else part of an if-else in the try block instead.
  *      // NOTE: if your else block has an error as well, then you're cooked.
- * } TryEnd(c, tryState); 
+ * } im.TryEnd(c, tryState); 
  * ```
  */
 function imTry(c: ImCache): TryState {

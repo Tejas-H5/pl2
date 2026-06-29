@@ -58,7 +58,7 @@ export function imBegin(c: ImCache, type: DisplayType, align = LEFT, justify = L
 	return result;
 }
 
-export function imHSpace(c: ImCache, col: string) {
+export function imHSpace(c: ImCache, col: string = cssVars.bg) {
 	imBegin(c, BLOCK); {
 		if (im.isFirstishRender(c)) {
 			imdom.setStyle(c, "width", "10px")
@@ -67,7 +67,16 @@ export function imHSpace(c: ImCache, col: string) {
 	} imEnd(c);
 }
 
-export function imVSpace(c: ImCache, col: string) {
+export function imHSpaceSmall(c: ImCache, col: string = cssVars.bg) {
+	imBegin(c, BLOCK); {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "width", "4px")
+			imdom.setStyle(c, "backgroundColor", col);
+		}
+	} imEnd(c);
+}
+
+export function imVSpace(c: ImCache, col: string = cssVars.bg) {
 	imBegin(c, BLOCK); {
 		if (im.isFirstishRender(c)) {
 			imdom.setStyle(c, "height", "10px")
@@ -137,21 +146,6 @@ export function imB(c: ImCache) {
 
 export function imCodeSpanEnd(c: ImCache) {
 	imEnd(c);
-	imEnd(c);
-}
-
-export function imButtonBegin(c: ImCache, type: DisplayType) {
-	imBegin(c, type);
-	if (im.isFirstishRender(c)) {
-		imdom.setStyle(c, "backgroundColor", cssVars.fg)
-		imdom.setStyle(c, "color", cssVars.bg)
-		imdom.setStyle(c, "cursor", "pointer")
-		imdom.setStyle(c, "padding", "2px 10px")
-		imdom.setStyle(c, "userSelect", "none")
-	}
-}
-
-export function imButtonEnd(c: ImCache) {
 	imEnd(c);
 }
 

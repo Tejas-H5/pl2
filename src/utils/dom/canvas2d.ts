@@ -74,8 +74,10 @@ export function drawLine(s: State, x0: number, y0: number, x1: number, y1: numbe
 }
 
 export function drawRect(s: State, x0: number, y0: number, width: number, height: number) {
-	s.ctx.fillRect(x0, y0, width, height);
-	s.ctx.fill();
+	s.ctx.beginPath(); {
+		s.ctx.rect(x0, y0, width, height);
+		s.ctx.fill();
+	} s.ctx.closePath();
 }
 
 export function drawSquare(s: State, x: number, y: number, radius: number) {
@@ -87,7 +89,10 @@ export function drawBackground(s: State) {
 }
 
 export function drawCircle(s: State, x: number, y: number, radius: number) {
-	s.ctx.arc(x, y, radius, 0, 2 * Math.PI);
+	s.ctx.beginPath(); {
+		s.ctx.arc(x, y, radius, 0, 2 * Math.PI);
+		s.ctx.fill();
+	} s.ctx.closePath();
 }
 
 
@@ -109,6 +114,40 @@ export function drawLabel(s: State, x: number, y: number, label: string, xDir: n
 	s.ctx.fillText(label, labelPosX, labelPosY);
 }
 
+function rotateX(x: number, y: number, angle: number): number {
+	return x * Math.cos(angle) - y * Math.sin(angle);
+}
+
+function rotateY(x: number, y: number, angle: number): number {
+	return x * Math.sin(angle) + y * Math.cos(angle);
+}
+
+export function drawLabelRotated(s: State, x: number, y: number, label: string, xDir: number, yDir: number, gap: number, angle: number) {
+	if (angle === 0) {
+		drawLabel(s, x, y, label, xDir, yDir, gap);
+		return;
+	}
+
+	const metrics = s.ctx.measureText(label);
+	const width   = metrics.width;
+	const height  = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+
+	s.ctx.textAlign    = "left";
+	s.ctx.textBaseline = "top";
+
+	// Offset the label by a particular direction such that it doesn't overlap the thing it's labelling
+	const xDirProjected = xDir * (width + gap) / 2;
+	const yDirProjected = yDir * (height + gap) / 2;
+
+	s.ctx.translate(x, y);
+	s.ctx.rotate(angle);
+	s.ctx.translate(-width / 2, -height / 2);
+	s.ctx.translate(xDirProjected, yDirProjected);
+
+	s.ctx.fillText(label, 0, 0);
+	s.ctx.resetTransform();
+}
+
 export function setFont(s: State, fontName: string, fontSizePx: number) {
 	if (s.fontName === fontName && s.fontSizePx === fontSizePx) {
 		return;
@@ -124,7 +163,7 @@ export function beginFrame(s: State) {
 	s.t0 = performance.now();
 
 	setFont(s, "Times New Roman", 12);
-	setColor(s, 0, 0, 0, 0);
+	setColor(s, 0, 0, 0, 1);
 }
 
 export function endFrame(s: State) {

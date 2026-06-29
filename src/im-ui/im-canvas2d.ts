@@ -1,6 +1,6 @@
 import { imdom, el } from "im-js";
 import { im, ImCache } from "im-js/im-core";
-import * as c2d from "dom-utils/canvas2d";
+import * as c2d from "utils/dom/canvas2d";
 
 export function imC2dBegin(c: ImCache, aspectRatio: number): c2d.State | undefined { 
 	let canvasState: c2d.State | undefined;
