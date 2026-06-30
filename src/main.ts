@@ -578,23 +578,29 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 		} imEnd(c);
 	} im.IfEnd(c);
 
-	const dragState = im.GetInline(c, imPlot) ?? im.Set(c, {
-		dragging: false,
-		x: 0, y: 0, xLo: 0, xHi: 0, yLo: 0, yHi: 0,
-		version: 0
-	});
-
 	const s = imC2dBegin(c, getDesiredAspectRatio());
 	if (s) {
 		if (im.isFirstishRender(c)) {
 			imdom.setStyle(c, "cursor", "move");
 		}
 
+		const mouse           = imdom.getMouse();
+		const startedDragging = imdom.hasMousePress(c);
+		let interaction : plt.DragInteractionType = plt.NOTHING; 
+		if (mouse.leftMouseButton) {
+			if (imdom.isKeyHeld(key.SHIFT)) {
+				interaction = plt.ZOOMING;
+			} else {
+				interaction = plt.DRAGGING;
+			}
+		}
+		plt.handleDragInteraction(s, plotState, startedDragging, interaction, mouse.X, mouse.Y);
+
 		const outputChanged = im.Memo(c, output);
 		const xAxisChanged  = im.Memo(c, state.xAxis);
 		const yAxisChanged  = im.Memo(c, state.yAxis);
-		const dragChanged   = im.Memo(c, dragState.version);
 		const plotChanged   = im.Memo(c, plotState.version);
+		const dragChanged   = im.Memo(c, plotState.dragState.version);
 
 		if (outputChanged) {
 			if (axes.length === 1) {
@@ -614,37 +620,29 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 			plt.refitPlot(plotState, xAxis.numbers, yAxis.numbers);
 		}
 
-		if (outputChanged || xAxisChanged || yAxisChanged || dragChanged || plotChanged) {
+		let crosshairX = -10; 
+		let crosshairY = -10;
+		if (imdom.hasMouseOver(c)) {
+			crosshairX = mouse.X;
+			crosshairY = mouse.Y;
+		}
+		const crosshairXChanged = im.Memo(c, crosshairX); 
+		const crosshairYChanged = im.Memo(c, crosshairY);
+
+		if (outputChanged || xAxisChanged || yAxisChanged || dragChanged || plotChanged || crosshairXChanged || crosshairYChanged) {
 			initializeC2d(s);
+			plt.initPlot(plotState, s);
+
 			plotState.lines = output.type === pl2.DataVisualiserType_Line;
 
 			c2d.setColor(s, 1, 1, 1, 1);
 			c2d.drawBackground(s)
 			c2d.setColor(s, 0, 0, 0, 1);
 
+			plt.plotCrosshairs(s, plotState, crosshairX, crosshairY)
 			plt.plotAxes(s, plotState, xAxis.name, yAxis.name);
 			plt.plotPoints(s, plotState, xAxis.numbers, yAxis.numbers);
 		}
-
-		const mouse           = imdom.getMouse();
-		const startedDragging = imdom.hasMousePress(c);
-		let interaction : plt.DragInteractionType = plt.NOTHING; 
-		if (mouse.leftMouseButton) {
-			if (imdom.isKeyHeld(key.SHIFT)) {
-				interaction = plt.ZOOMING;
-			} else {
-				interaction = plt.DRAGGING;
-			}
-		}
-		plt.handleDragInteraction(s, plotState, startedDragging, interaction, mouse.X, mouse.Y);
-
-		if (plt.isOverLeftAxis(s, mouse.X)) {
-
-		} else if (plt.isOverBottomAxis(s, mouse.Y)) {
-
-		} else {
-		}
-
 	} imC2dEnd(c, s);
 }
 

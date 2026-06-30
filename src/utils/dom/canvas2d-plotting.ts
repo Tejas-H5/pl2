@@ -19,6 +19,17 @@ type AxisSettings = {
 export type PlotState = {
 	x: AxisSettings;
 	y: AxisSettings;
+
+	fontSize: number;
+	clientRect: {
+		left:   number;
+		top:    number;
+		width:  number;
+		height: number;
+	};
+
+	axisOffsetFromEdge: number;
+
 	lines: boolean;
 	version: number;
 	dragState: PlotDragState;
@@ -35,6 +46,17 @@ export function newPlotState(): PlotState {
 	return {
 		x: { lo: 0, hi: 1, fitLo: 0, fitHi: 1 },
 		y: { lo: 0, hi: 1, fitLo: 0, fitHi: 1 },
+
+		fontSize: 0, 
+		clientRect: {
+			left:   0,
+			top:    0,
+			width:  0,
+			height: 0,
+		},
+
+		axisOffsetFromEdge: 0,
+
 		lines: false,
 		version: 0,
 
@@ -93,12 +115,40 @@ function getAxisTickStart(axis: AxisSettings, tickSize: number): number {
 	return Math.floor(axis.lo / tickSize) * tickSize;
 }
 
-function getAxisOffsetFromEdge(s: c2d.State) {
-	const gap = 4;
-	return s.fontSizePx + gap;
+export function initPlot(plot: PlotState, s: c2d.State) {
+	plot.fontSize = plot.fontSize;
+
+	const rect = s.canvas.getBoundingClientRect();
+	plot.clientRect.left   = rect.left;
+	plot.clientRect.top    = rect.top;
+	plot.clientRect.width  = rect.width;
+	plot.clientRect.height = rect.height;
+
+	const gap                = 4;
+	plot.axisOffsetFromEdge  = s.fontSizePx + gap;
 }
 
-export function plotAxes(s: c2d.State, plot: PlotState, xAxisName: string, yAxisName: string) {
+export function plotCrosshairs(s: c2d.State, plot: PlotState, mouseX: number, mouseY: number) {
+	mouseX -= plot.clientRect.left;
+	mouseY -= plot.clientRect.top;
+	c2d.drawLine(s, 0, mouseY, s.width, mouseY, 1);
+	c2d.drawLine(s, mouseX, 0, mouseX, s.height, 1);
+}
+
+export function getAxisLabel(num: number): string {
+	if (Math.abs(num) < 0.00000001) {
+		return "0";
+	}
+	return num.toPrecision(3);
+}
+
+export function plotAxes(
+	s: c2d.State,
+	plot: PlotState,
+	xAxisName: string, yAxisName: string,
+) {
+	const initialFontSize = s.fontSizePx;
+
 	const xCenter = s.width  / 2;
 	const yCenter = s.height / 2;
 
@@ -107,9 +157,11 @@ export function plotAxes(s: c2d.State, plot: PlotState, xAxisName: string, yAxis
 
 	const thickness = 1;
 
+	c2d.setFont(s, s.fontName, initialFontSize / 2);
+
 	// X axis
 	{
-		const yLine = s.height - getAxisOffsetFromEdge(s);
+		const yLine = s.height - plot.axisOffsetFromEdge;
 		c2d.drawLine(s, 0, yLine, s.width, yLine, 1);
 
 		const tickSize = 5;
@@ -118,12 +170,13 @@ export function plotAxes(s: c2d.State, plot: PlotState, xAxisName: string, yAxis
 		for (let x = xStart; x < plot.x.hi; x += tickGap) {
 			const xTick = mapXAxisToScreenX(s, plot, x);
 			c2d.drawLine(s, xTick, yLine, xTick, yLine - tickSize, thickness);
+			c2d.drawLabel(s, xTick, yLine - tickSize, getAxisLabel(x), 0, -1, 2);
 		}
 	}
 
 	// Y axis
 	{
-		const xLine = getAxisOffsetFromEdge(s);
+		const xLine = plot.axisOffsetFromEdge;
 		c2d.drawLine(s, xLine, 0, xLine, s.height, thickness);
 
 		const tickSize = 5;
@@ -132,21 +185,22 @@ export function plotAxes(s: c2d.State, plot: PlotState, xAxisName: string, yAxis
 		for (let y = yStart; y < plot.y.hi; y += tickGap) {
 			const yTick = mapYAxisToScreenY(s, plot, y);
 			c2d.drawLine(s, xLine, yTick, xLine + tickSize, yTick, thickness);
+			c2d.drawLabel(s, xLine + tickSize, yTick, getAxisLabel(y), 1, 0, 4);
 		}
 	}
+
+	c2d.setFont(s, s.fontName, initialFontSize);
 }
 
-export function isOverBottomAxis(s: c2d.State, mouseY: number): boolean {
-	const top  = s.canvas.getBoundingClientRect().top;
-	mouseY     = -(mouseY - top - s.canvas.clientHeight);
-	const size = getAxisOffsetFromEdge(s);
-	return 0 < mouseY && mouseY < size;
+export function isOverBottomAxis(plot: PlotState, mouseY: number): boolean {
+	const top  = plot.clientRect.top;
+	mouseY     = -(mouseY - top - plot.clientRect.height);
+	return 0 < mouseY && mouseY < plot.axisOffsetFromEdge;
 }
 
-export function isOverLeftAxis(s: c2d.State, mouseX: number): boolean {
-	mouseX -= s.canvas.getBoundingClientRect().left;
-	const size = getAxisOffsetFromEdge(s);
-	return 0 < mouseX && mouseX < size;
+export function isOverLeftAxis(s: c2d.State, plot: PlotState, mouseX: number): boolean {
+	mouseX -= plot.clientRect.left;
+	return 0 < mouseX && mouseX < plot.axisOffsetFromEdge;
 }
 
 export const NOTHING  = 0;
@@ -205,20 +259,20 @@ export function handleDragInteraction(
 	}
 }
 
-export function mapYAxisToScreenY(s: c2d.State, options: PlotState, val: number) {
-	return s.height - mapValueToScreen(s, options.y, val, s.height);
+export function mapYAxisToScreenY(s: c2d.State, plot: PlotState, val: number) {
+	return s.height - mapValueToScreen(plot, plot.y, val, s.height);
 }
 
-export function mapScreenYToYAxis(s: c2d.State, options: PlotState, val: number) {
-	return mapScreenToValue(s, options.y, val - s.height, s.height);
+export function mapScreenYToYAxis(s: c2d.State, plot: PlotState, val: number) {
+	return mapScreenToValue(plot, plot.y, val - s.height, s.height);
 }
 
-export function mapXAxisToScreenX(s: c2d.State, options: PlotState, val: number) {
-	return mapValueToScreen(s, options.x, val, s.width);
+export function mapXAxisToScreenX(s: c2d.State, plot: PlotState, val: number) {
+	return mapValueToScreen(plot, plot.x, val, s.width);
 }
 
-export function mapScreenXToXAxis(s: c2d.State, options: PlotState, val: number) {
-	return mapScreenToValue(s, options.x, val, s.width);
+export function mapScreenXToXAxis(s: c2d.State, plot: PlotState, val: number) {
+	return mapScreenToValue(plot, plot.x, val, s.width);
 }
 
 export function plotPoints(s: c2d.State, options: PlotState, xAxis: number[], yAxis: number[]) {
@@ -243,15 +297,15 @@ export function plotPoints(s: c2d.State, options: PlotState, xAxis: number[], yA
 	}
 }
 
-export function mapValueToScreen(s: c2d.State, axisSettings: AxisSettings, val: number, screenSize: number): number {
-	const offset   = getAxisOffsetFromEdge(s);
+export function mapValueToScreen(plot: PlotState, axisSettings: AxisSettings, val: number, screenSize: number): number {
+	const offset   = plot.axisOffsetFromEdge;
 	const realSize = screenSize - offset;
 	let t = (val - axisSettings.lo) / (axisSettings.hi - axisSettings.lo);
 	return offset + t * realSize;
 }
 
-export function mapScreenToValue(s: c2d.State, axisSettings: AxisSettings, val: number, screenSize: number): number {
-	const offset   = getAxisOffsetFromEdge(s);
+export function mapScreenToValue(plot: PlotState, axisSettings: AxisSettings, val: number, screenSize: number): number {
+	const offset   = plot.axisOffsetFromEdge;
 	const realSize = screenSize - offset;
 	const t = val / realSize;
 	return t * (axisSettings.hi - axisSettings.lo) + axisSettings.lo;
@@ -264,8 +318,8 @@ export function fixPlotDomain(plot: PlotState) {
 
 export function fixPlotAxis(axis: AxisSettings) {
 	const size = axis.fitHi - axis.fitLo;
-	const minSize = 0.1 * size;
-	const maxSize = 10  * size;
+	const minSize = 0.001 * size;
+	const maxSize = 2  * size;
 
 	const axisSize = axis.hi - axis.lo;
 	if (axisSize < minSize) {
