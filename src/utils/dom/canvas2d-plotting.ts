@@ -11,6 +11,9 @@ export type Type =
 type AxisSettings = {
 	lo: number;
 	hi: number;
+
+	fitLo: number;
+	fitHi: number;
 }
 
 export type PlotState = {
@@ -18,14 +21,28 @@ export type PlotState = {
 	y: AxisSettings;
 	lines: boolean;
 	version: number;
+	dragState: PlotDragState;
+}
+
+type PlotDragState = {
+	interaction: DragInteractionType;
+	x: number; xLo: number; xHi: number;
+	y: number; yLo: number; yHi: number;
+	version: number;
 }
 
 export function newPlotState(): PlotState {
 	return {
-		x: { lo: 0, hi: 1 },
-		y: { lo: 0, hi: 1 },
+		x: { lo: 0, hi: 1, fitLo: 0, fitHi: 1 },
+		y: { lo: 0, hi: 1, fitLo: 0, fitHi: 1 },
 		lines: false,
 		version: 0,
+
+		dragState: {
+			interaction: NOTHING,
+			x: 0, y: 0, xLo: 0, xHi: 0, yLo: 0, yHi: 0,
+			version: 0
+		}
 	};
 }
 
@@ -45,6 +62,11 @@ export function refitPlot(plotState: PlotState, xAxis: number[], yAxis: number[]
 
 	plotState.x.hi += getTickSizeForDomain(xMax - xMin);
 	plotState.y.hi += getTickSizeForDomain(yMax - yMin);
+
+	plotState.x.fitLo = plotState.x.lo; 
+	plotState.y.fitLo = plotState.y.lo; 
+	plotState.x.fitHi = plotState.x.hi;
+	plotState.y.fitHi = plotState.y.hi;
 }
 
 function getAxisDomain(axis: AxisSettings): number {
@@ -76,7 +98,7 @@ function getAxisOffsetFromEdge(s: c2d.State) {
 	return s.fontSizePx + gap;
 }
 
-export function plotAxes(s: c2d.State, options: PlotState, xAxisName: string, yAxisName: string) {
+export function plotAxes(s: c2d.State, plot: PlotState, xAxisName: string, yAxisName: string) {
 	const xCenter = s.width  / 2;
 	const yCenter = s.height / 2;
 
@@ -91,10 +113,10 @@ export function plotAxes(s: c2d.State, options: PlotState, xAxisName: string, yA
 		c2d.drawLine(s, 0, yLine, s.width, yLine, 1);
 
 		const tickSize = 5;
-		const tickGap  = getAxisTickSize(options.x);
-		const xStart   = getAxisTickStart(options.x, tickGap);
-		for (let x = xStart; x < options.x.hi; x += tickGap) {
-			const xTick = mapXAxisToScreenX(s, options, x);
+		const tickGap  = getAxisTickSize(plot.x);
+		const xStart   = getAxisTickStart(plot.x, tickGap);
+		for (let x = xStart; x < plot.x.hi; x += tickGap) {
+			const xTick = mapXAxisToScreenX(s, plot, x);
 			c2d.drawLine(s, xTick, yLine, xTick, yLine - tickSize, thickness);
 		}
 	}
@@ -105,12 +127,81 @@ export function plotAxes(s: c2d.State, options: PlotState, xAxisName: string, yA
 		c2d.drawLine(s, xLine, 0, xLine, s.height, thickness);
 
 		const tickSize = 5;
-		const tickGap  = getAxisTickSize(options.y);
-		const yStart   = getAxisTickStart(options.y, tickGap);
-		for (let y = yStart; y < options.y.hi; y += tickGap) {
-			const yTick = mapYAxisToScreenY(s, options, y);
+		const tickGap  = getAxisTickSize(plot.y);
+		const yStart   = getAxisTickStart(plot.y, tickGap);
+		for (let y = yStart; y < plot.y.hi; y += tickGap) {
+			const yTick = mapYAxisToScreenY(s, plot, y);
 			c2d.drawLine(s, xLine, yTick, xLine + tickSize, yTick, thickness);
 		}
+	}
+}
+
+export function isOverBottomAxis(s: c2d.State, mouseY: number): boolean {
+	const top  = s.canvas.getBoundingClientRect().top;
+	mouseY     = -(mouseY - top - s.canvas.clientHeight);
+	const size = getAxisOffsetFromEdge(s);
+	return 0 < mouseY && mouseY < size;
+}
+
+export function isOverLeftAxis(s: c2d.State, mouseX: number): boolean {
+	mouseX -= s.canvas.getBoundingClientRect().left;
+	const size = getAxisOffsetFromEdge(s);
+	return 0 < mouseX && mouseX < size;
+}
+
+export const NOTHING  = 0;
+export const DRAGGING = 1;
+export const ZOOMING  = 2;
+
+export type DragInteractionType = 
+ | typeof NOTHING
+ | typeof DRAGGING
+ | typeof ZOOMING
+ ;
+
+export function handleDragInteraction(
+	s: c2d.State,
+	plot: PlotState,
+	startingInteraction: boolean,
+	interaction: DragInteractionType,
+	mouseX: number, mouseY: number, 
+) {
+	const dragState = plot.dragState;
+
+	if (startingInteraction) {
+		dragState.interaction = interaction;
+		dragState.x = mouseX;
+		dragState.y = mouseY;
+		dragState.xLo = plot.x.lo;
+		dragState.xHi = plot.x.hi;
+		dragState.yLo = plot.y.lo;
+		dragState.yHi = plot.y.hi;
+		dragState.version += 1;
+	}
+
+	if (dragState.interaction !== NOTHING) {
+		plot.x.lo = dragState.xLo; plot.x.hi = dragState.xHi;
+		plot.y.lo = dragState.yLo; plot.y.hi = dragState.yHi;
+
+		const dx = -(mapScreenXToXAxis(s, plot, mouseX) - mapScreenXToXAxis(s, plot, dragState.x));
+		const dy =   mapScreenYToYAxis(s, plot, mouseY) - mapScreenYToYAxis(s, plot, dragState.y);
+
+		if (dragState.interaction === DRAGGING) {
+			plot.x.lo = dragState.xLo + dx; plot.x.hi = dragState.xHi + dx;
+			plot.y.lo = dragState.yLo + dy; plot.y.hi = dragState.yHi + dy;
+		} else if (dragState.interaction === ZOOMING) {
+			plot.x.lo = dragState.xLo - dx; plot.x.hi = dragState.xHi + dx;
+			plot.y.lo = dragState.yLo - dy; plot.y.hi = dragState.yHi + dy;
+		}
+
+		fixPlotDomain(plot);
+
+		plot.version += 1;
+	}
+
+	if (dragState.interaction !== interaction && interaction === NOTHING) {
+		dragState.interaction = NOTHING;
+		dragState.version += 1;
 	}
 }
 
@@ -165,3 +256,26 @@ export function mapScreenToValue(s: c2d.State, axisSettings: AxisSettings, val: 
 	const t = val / realSize;
 	return t * (axisSettings.hi - axisSettings.lo) + axisSettings.lo;
 }
+
+export function fixPlotDomain(plot: PlotState) {
+	fixPlotAxis(plot.x);
+	fixPlotAxis(plot.y);
+}
+
+export function fixPlotAxis(axis: AxisSettings) {
+	const size = axis.fitHi - axis.fitLo;
+	const minSize = 0.1 * size;
+	const maxSize = 10  * size;
+
+	const axisSize = axis.hi - axis.lo;
+	if (axisSize < minSize) {
+		let mid = 0.5 * axis.hi + 0.5 * axis.lo;
+		axis.lo = mid - minSize / 2;
+		axis.hi = mid + minSize / 2;
+	} else if (axisSize > maxSize) {
+		let mid = 0.5 * axis.hi + 0.5 * axis.lo;
+		axis.lo = mid - maxSize / 2;
+		axis.hi = mid + maxSize / 2;
+	}
+}
+

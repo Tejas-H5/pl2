@@ -1,5 +1,5 @@
 import { assert, assertNever } from "assert";
-import { im, ImCache, imdom } from "im-js";
+import { im, ImCache, imdom, key } from "im-js";
 import { BLOCK, CENTER, COL, cssVars, imui, ROW } from "im-ui";
 import { imButtonPressed } from "im-ui/im-button";
 import { imC2dBegin, imC2dEnd } from "im-ui/im-canvas2d";
@@ -531,8 +531,10 @@ function imAxisSelector(c: ImCache, axes: pl2.DataOutputAxis[], currentAxis: num
 	let result: AxisSelectorEvent | undefined;
 
 	imBegin(c, ROW); {
+		let isNotFirst = false;
 		im.For(c); for (let i = 0; i < axes.length; i++) {
-			if (i > 0) imHSpaceSmall(c);
+			if (isNotFirst) imHSpaceSmall(c);
+			isNotFirst = true;
 
 			const axis = axes[i];
 			if (imButtonPressed(c, axis.name, currentAxis === i)) {
@@ -550,23 +552,31 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 	const plotState = im.State(c, plt.newPlotState);
 	const state = im.GetInline(c, imPlot) ?? im.Set(c, { xAxis: 0, yAxis: 0 });
 
-	imBegin(c, ROW, CENTER); {
-		imStr(c, "X: ");
-		imHSpaceSmall(c);
-		const xAxisSelect = imAxisSelector(c, output.axes, state.xAxis);
-		if (xAxisSelect) {
-			state.xAxis = xAxisSelect.newAxis;
-		}
+	if (im.If(c) && axes.length > 1) {
+		imBegin(c, ROW, CENTER); {
+			imStr(c, "X: ");
+			imHSpaceSmall(c);
+			const xAxisSelect = imAxisSelector(c, output.axes, state.xAxis);
+			if (xAxisSelect) {
+				state.xAxis = xAxisSelect.newAxis;
+			}
 
-		imHSpace(c);
+			imHSpace(c);
 
-		imStr(c, "Y: ");
-		imHSpaceSmall(c);
-		const yAxisSelect = imAxisSelector(c, output.axes, state.yAxis);
-		if (yAxisSelect) {
-			state.yAxis = yAxisSelect.newAxis;
-		}
-	} imEnd(c);
+			if (imButtonPressed(c, "<->")) {
+				[state.xAxis, state.yAxis] = [state.yAxis, state.xAxis];
+			}
+
+			imHSpace(c);
+
+			imStr(c, "Y: ");
+			imHSpaceSmall(c);
+			const yAxisSelect = imAxisSelector(c, output.axes, state.yAxis);
+			if (yAxisSelect) {
+				state.yAxis = yAxisSelect.newAxis;
+			}
+		} imEnd(c);
+	} im.IfEnd(c);
 
 	const dragState = im.GetInline(c, imPlot) ?? im.Set(c, {
 		dragging: false,
@@ -586,14 +596,20 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 		const dragChanged   = im.Memo(c, dragState.version);
 		const plotChanged   = im.Memo(c, plotState.version);
 
-		if (axes.length === 1) {
-			state.xAxis = 0;
-			state.yAxis = 0;
+		if (outputChanged) {
+			if (axes.length === 1) {
+				state.xAxis = 0;
+				state.yAxis = 0;
+			} else if (axes.length > 1 && state.xAxis === state.yAxis) {
+				state.xAxis = 0;
+				state.yAxis = 1;
+			}
 		}
+
 		const xAxis = axes[state.xAxis];
 		const yAxis = axes[state.yAxis];
 
-		if (outputChanged) {
+		if (outputChanged || xAxisChanged || yAxisChanged) {
 			initializeC2d(s);
 			plt.refitPlot(plotState, xAxis.numbers, yAxis.numbers);
 		}
@@ -610,36 +626,25 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 			plt.plotPoints(s, plotState, xAxis.numbers, yAxis.numbers);
 		}
 
-		const mouse = imdom.getMouse();
+		const mouse           = imdom.getMouse();
+		const startedDragging = imdom.hasMousePress(c);
+		let interaction : plt.DragInteractionType = plt.NOTHING; 
+		if (mouse.leftMouseButton) {
+			if (imdom.isKeyHeld(key.SHIFT)) {
+				interaction = plt.ZOOMING;
+			} else {
+				interaction = plt.DRAGGING;
+			}
+		}
+		plt.handleDragInteraction(s, plotState, startedDragging, interaction, mouse.X, mouse.Y);
 
-		if (imdom.hasMousePress(c)) {
-			dragState.dragging = true;
-			dragState.x = mouse.X;
-			dragState.y = mouse.Y;
-			dragState.xLo = plotState.x.lo;
-			dragState.xHi = plotState.x.hi;
-			dragState.yLo = plotState.y.lo;
-			dragState.yHi = plotState.y.hi;
-			dragState.version += 1;
+		if (plt.isOverLeftAxis(s, mouse.X)) {
+
+		} else if (plt.isOverBottomAxis(s, mouse.Y)) {
+
+		} else {
 		}
 
-		if (dragState.dragging) {
-			plotState.x.lo = dragState.xLo; plotState.x.hi = dragState.xHi;
-			plotState.y.lo = dragState.yLo; plotState.y.hi = dragState.yHi;
-
-			const dx = -(plt.mapScreenXToXAxis(s, plotState, mouse.X) - plt.mapScreenXToXAxis(s, plotState, dragState.x));
-			const dy = plt.mapScreenYToYAxis(s, plotState, mouse.Y) - plt.mapScreenYToYAxis(s, plotState, dragState.y);
-
-			plotState.x.lo = dragState.xLo + dx; plotState.x.hi = dragState.xHi + dx;
-			plotState.y.lo = dragState.yLo + dy; plotState.y.hi = dragState.yHi + dy;
-
-			plotState.version += 1;
-		}
-		
-		if (dragState.dragging && !mouse.leftMouseButton) {
-			dragState.dragging = false;
-			dragState.version += 1;
-		}
 	} imC2dEnd(c, s);
 }
 

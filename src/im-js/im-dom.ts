@@ -1262,7 +1262,7 @@ function isKeyReleased(keysState: KeyboardState, key: NormalizedKey): boolean {
     return false;
 }
 
-function isKeyHeld(keysState: KeyboardState, key: NormalizedKey): boolean {
+function isKeyHeld(key: NormalizedKey, keysState = getKeyboard()): boolean {
     const keys = keysState.keys.keys;
     for (let i = 0; i < keys.held.length; i++) {
         if (keys.held[i] === key) return true;
@@ -1271,7 +1271,7 @@ function isKeyHeld(keysState: KeyboardState, key: NormalizedKey): boolean {
 }
 
 
-function isLetterPressed(keysState: KeyboardState, letter: string): boolean {
+function isLetterPressed(letter: string, keysState = getKeyboard()): boolean {
     const letters = keysState.keys.letters;
     for (let i = 0; i < letters.pressed.length; i++) {
         if (letters.pressed[i] === letter) return true;
@@ -1279,7 +1279,7 @@ function isLetterPressed(keysState: KeyboardState, letter: string): boolean {
     return false;
 }
 
-function isLetterRepeated(keysState: KeyboardState, letter: string): boolean {
+function isLetterRepeated(letter: string, keysState = getKeyboard()): boolean {
     const letters = keysState.keys.letters;
     for (let i = 0; i < letters.repeated.length; i++) {
         if (letters.repeated[i] === letter) return true;
@@ -1287,9 +1287,9 @@ function isLetterRepeated(keysState: KeyboardState, letter: string): boolean {
     return false;
 }
 
-function isLetterPressedOrRepeated(keysState: KeyboardState, letter: string): boolean {
-    if (isLetterPressed(keysState, letter)) return true;
-    if (isLetterRepeated(keysState, letter)) return true;
+function isLetterPressedOrRepeated(letter: string, keysState = getKeyboard()): boolean {
+    if (isLetterPressed(letter, keysState))  return true;
+    if (isLetterRepeated(letter, keysState)) return true;
     return false;
 }
 
