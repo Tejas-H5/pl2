@@ -1,6 +1,6 @@
 import { assert, assertNever } from "assert";
 import { im, ImCache, imdom, key } from "im-js";
-import { BLOCK, CENTER, COL, cssVars, imui, ROW } from "im-ui";
+import { BLOCK, CENTER, COL, cssVars, imui, INLINE, LEFT, RIGHT, ROW, ROW_WRAP } from "im-ui";
 import { imButtonPressed } from "im-ui/im-button";
 import { imC2dBegin, imC2dEnd } from "im-ui/im-canvas2d";
 import { ast, pl2 } from "pl2";
@@ -23,7 +23,8 @@ import {
 	imStrFmt,
 	imSubHeading,
 	imVDivider,
-	imVSpace
+	imVSpace,
+    imVSpaceSmall
 } from "ui-primitives";
 import * as c2d from "utils/dom/canvas2d";
 import * as plt from "utils/dom/canvas2d-plotting";
@@ -530,18 +531,19 @@ type AxisSelectorEvent = { newAxis: number };
 function imAxisSelector(c: ImCache, axes: pl2.DataOutputAxis[], currentAxis: number): AxisSelectorEvent | undefined {
 	let result: AxisSelectorEvent | undefined;
 
-	imBegin(c, ROW); {
-		let isNotFirst = false;
-		im.For(c); for (let i = 0; i < axes.length; i++) {
-			if (isNotFirst) imHSpaceSmall(c);
-			isNotFirst = true;
+	let isNotFirst = false;
+	im.For(c); for (let i = 0; i < axes.length; i++) {
+		if (isNotFirst) imHSpaceSmall(c);
+		isNotFirst = true;
 
+		imBegin(c, INLINE); {
 			const axis = axes[i];
 			if (imButtonPressed(c, axis.name, currentAxis === i)) {
 				result = { newAxis: i };
 			}
-		} im.ForEnd(c);
-	} imEnd(c);
+			imVSpaceSmall(c);
+		} imEnd(c);
+	} im.ForEnd(c);
 
 	return result;
 }
@@ -554,28 +556,35 @@ function imPlot(c: ImCache, output: pl2.DataOutput) {
 
 	if (im.If(c) && axes.length > 1) {
 		imBegin(c, ROW, CENTER); {
-			imStr(c, "X: ");
-			imHSpaceSmall(c);
-			const xAxisSelect = imAxisSelector(c, output.axes, state.xAxis);
-			if (xAxisSelect) {
-				state.xAxis = xAxisSelect.newAxis;
-			}
+			imBegin(c, ROW_WRAP); imFlex(c); {
+				imStr(c, "X: ");
 
-			imHSpace(c);
+				imHSpaceSmall(c);
 
-			if (imButtonPressed(c, "<->")) {
-				[state.xAxis, state.yAxis] = [state.yAxis, state.xAxis];
-			}
+				const xAxisSelect = imAxisSelector(c, output.axes, state.xAxis);
+				if (xAxisSelect) {
+					state.xAxis = xAxisSelect.newAxis;
+				}
+				imHSpace(c);
+			} imEnd(c);
 
-			imHSpace(c);
+			imBegin(c, COL, CENTER); {
+				if (imButtonPressed(c, "<->")) {
+					[state.xAxis, state.yAxis] = [state.yAxis, state.xAxis];
+				}
+			} imEnd(c);
 
-			imStr(c, "Y: ");
-			imHSpaceSmall(c);
-			const yAxisSelect = imAxisSelector(c, output.axes, state.yAxis);
-			if (yAxisSelect) {
-				state.yAxis = yAxisSelect.newAxis;
-			}
+			imBegin(c, ROW_WRAP, LEFT, RIGHT); imFlex(c); {
+				imStr(c, "Y: ");
+				imHSpaceSmall(c);
+				const yAxisSelect = imAxisSelector(c, output.axes, state.yAxis);
+				if (yAxisSelect) {
+					state.yAxis = yAxisSelect.newAxis;
+				}
+			} imEnd(c);
 		} imEnd(c);
+
+		imVSpace(c);
 	} im.IfEnd(c);
 
 	const s = imC2dBegin(c, getDesiredAspectRatio());

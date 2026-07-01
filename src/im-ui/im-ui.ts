@@ -1,4 +1,4 @@
-// imui v0.00.4
+// imui v0.00.5
 
 import { imdom, el, im, ImCache } from '/im-js';
 
@@ -302,6 +302,7 @@ export const COL_REVERSE  = 7 as DisplayTypeInstance;
 // No more TABLE, TABLE_ROW, TABLE_CELL. Use display: grid + grid-template-columns
 export const INLINE_ROW   = 11 as DisplayTypeInstance;
 export const INLINE_COL   = 12 as DisplayTypeInstance;
+export const ROW_WRAP     = 13 as DisplayTypeInstance;
 
 export type DisplayType 
     = typeof BLOCK 
@@ -311,7 +312,9 @@ export type DisplayType
     | typeof COL 
     | typeof COL_REVERSE 
     | typeof INLINE_ROW
-    | typeof INLINE_COL;
+    | typeof INLINE_COL
+    | typeof ROW_WRAP
+    ;
 
 /**
  * A dummy element with flex: 1. Super useful for flexbox.
@@ -326,6 +329,7 @@ function imFlex1(c: ImCache) {
 const cnInlineBlock = cssb.cn("inlineBlock", [` { display: inline-block; }`]);
 const cnInline      = cssb.cn("inline",      [` { display: inline; }`]);
 const cnRow         = cssb.cn("row",         [` { display: flex; flex-direction: row; }`]);
+const cnRowWrap     = cssb.cn("rowWrap",     [` { display: flex; flex-wrap: wrap; flex-direction: row; }`]);
 const cnInlineRow   = cssb.cn("inline-row",  [` { display: inline-flex; flex-direction: row; }`]);
 const cnRowReverse  = cssb.cn("row-reverse", [` { display: flex; flex-direction: row-reverse; }`]);
 const cnCol         = cssb.cn("col",         [` { display: flex; flex-direction: column; }`]);
@@ -344,7 +348,7 @@ function imLayout(c: ImCache, type: DisplayType) {
         im.Set(c, type);
 
         switch(last) {
-            case BLOCK:        /* Do nothing - this is the default style */ break;
+            case BLOCK:        /* Do nothing - this is the default style */    break;
             case INLINE_BLOCK: imdom.setClass(c, cnInlineBlock, false);        break;
             case INLINE:       imdom.setClass(c, cnInline, false);             break;
             case ROW:          imdom.setClass(c, cnRow, false);                break;
@@ -353,10 +357,11 @@ function imLayout(c: ImCache, type: DisplayType) {
             case COL_REVERSE:  imdom.setClass(c, cnColReverse, false);         break;
             case INLINE_ROW:   imdom.setClass(c, cnInlineRow, false);          break;
             case INLINE_COL:   imdom.setClass(c, cnInlineCol, false);          break;
+            case ROW_WRAP:     imdom.setClass(c, cnRowWrap, false);            break;
         }
 
         switch(type) {
-            case BLOCK:        /* Do nothing - this is the default style */ break;
+            case BLOCK:        /* Do nothing - this is the default style */    break;
             case INLINE_BLOCK: imdom.setClass(c, cnInlineBlock, true);         break;
             case INLINE:       imdom.setClass(c, cnInline, true);              break;
             case ROW:          imdom.setClass(c, cnRow, true);                 break;
@@ -365,6 +370,7 @@ function imLayout(c: ImCache, type: DisplayType) {
             case COL_REVERSE:  imdom.setClass(c, cnColReverse, true);          break;
             case INLINE_ROW:   imdom.setClass(c, cnInlineRow, true);           break;
             case INLINE_COL:   imdom.setClass(c, cnInlineCol, true);           break;
+            case ROW_WRAP:     imdom.setClass(c, cnRowWrap, true);             break;
         }
     }
 }

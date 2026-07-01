@@ -85,6 +85,15 @@ export function imVSpace(c: ImCache, col: string = cssVars.bg) {
 	} imEnd(c);
 }
 
+export function imVSpaceSmall(c: ImCache, col: string = cssVars.bg) {
+	imBegin(c, BLOCK); {
+		if (im.isFirstishRender(c)) {
+			imdom.setStyle(c, "height", "4px")
+			imdom.setStyle(c, "backgroundColor", col);
+		}
+	} imEnd(c);
+}
+
 export function imVDivider(c: ImCache) {
 	imBegin(c, BLOCK); {
 		if (im.isFirstishRender(c)) {
